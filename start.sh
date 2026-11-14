@@ -14,9 +14,9 @@ if [ ! -x .venv/bin/python ]; then
   echo "Making the project's Python environment (.venv)..."
   python3 -m venv .venv || exit 1
 fi
-if ! .venv/bin/python -c "import bleak, serial, pyautogui, AppKit, ApplicationServices" 2>/dev/null; then
+if ! .venv/bin/python -c "import bleak, serial, pyautogui, AppKit, ApplicationServices, sounddevice, websockets" 2>/dev/null; then
   echo "Installing libraries (bleak: Bluetooth, pyserial: USB, pyautogui: computer control, pyobjc: menu bar)..."
-  .venv/bin/python -m pip install -q --disable-pip-version-check bleak pyserial pyautogui pyobjc-framework-Cocoa pyobjc-framework-ApplicationServices || exit 1
+  .venv/bin/python -m pip install -q --disable-pip-version-check bleak pyserial pyautogui pyobjc-framework-Cocoa pyobjc-framework-ApplicationServices sounddevice websockets || exit 1
 fi
 case "$1" in
   --setup-only) exit 0 ;;

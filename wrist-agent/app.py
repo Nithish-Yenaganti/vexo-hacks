@@ -36,15 +36,16 @@ import server  # noqa: E402  (sets the working folder to the project, where .env
 COLOURS = {  # state -> (r, g, b)
     "stopped": (0.55, 0.55, 0.55), "starting": (0.55, 0.55, 0.55), "ready": (0.92, 0.92, 0.92),
     "listening": (0.20, 0.45, 1.00), "working": (1.00, 0.67, 0.00), "speaking": (0.15, 0.80, 0.35),
-    "error": (1.00, 0.25, 0.20),
+    "error": (1.00, 0.25, 0.20), "chat": (0.92, 0.92, 0.92),
 }
 LABELS = {"stopped": "Stopped", "starting": "Connecting to the band…", "ready": "Ready · tap the band to talk",
           "listening": "Listening… tap when you're done", "working": "Working…", "speaking": "Speaking",
-          "error": "Problem"}
+          "error": "Problem", "chat": "Listening · just talk"}
 AGENTS = [("claude", "Claude Code"), ("codex", "OpenAI Codex"), ("computer", "Computer use (this Mac)"),
           ("echo", "Echo (test)")]
 MODES = [("pretend", "Pretend band (type in panel)"), ("pretend-deepgram", "Pretend band + Deepgram"),
-         ("bluetooth", "Real band · Bluetooth"), ("usb", "Real band · USB cable")]
+         ("bluetooth", "Real band · Bluetooth"), ("usb", "Real band · USB cable"),
+         ("airpods", "AirPods voice chat (no band)")]
 PILL_W, PILL_H = 520, 62
 
 
@@ -369,19 +370,19 @@ class Controller(NSObject):
             self.paint_dot(shown)
             self.pill_dot.setTextColor_(colour(shown))
         steps = ""
-        if state == "listening":
+        if state == "listening" or (state == "chat" and self.heard and not self.reply):
             text = self.heard or "Say what you want…"
         elif state == "working":
             text = "You: " + self.request if self.request else ""
             steps = "\n".join("• " + s for s in self.steps)
-        elif self.reply and state in ("speaking", "ready"):
+        elif self.reply and state in ("speaking", "ready", "chat"):
             text = self.reply
         else:
             text = self.detail if time.time() - self.detail_at < 10 else ""
         if shown == "error" and self.detail:
             text = self.detail
         self.layout_pill(LABELS.get(shown, shown), text, steps)
-        busy = state in ("starting", "listening", "working", "speaking")
+        busy = state in ("starting", "listening", "working", "speaking")      # "chat" = idle, listening
         recent = time.time() - max(self.changed_at, self.detail_at) < 12
         visible = self.pill_on and (busy or recent or shown == "error")
         target = 1.0 if visible else 0.0

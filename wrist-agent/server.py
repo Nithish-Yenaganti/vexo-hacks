@@ -34,7 +34,8 @@ os.chdir(ROOT)                                   # .env is read from here
 DEFAULTS = {"band": None, "mode": "pretend", "agent": "claude", "workdir": str(ROOT),
             "permission_mode": "acceptEdits", "allowed_tools": "", "voice": True, "voice_engine": "auto"}
 VOICES = ("auto", "openai", "elevenlabs", "say")
-MODES = {"pretend", "pretend-deepgram", "bluetooth", "usb"}
+MODES = {"pretend", "pretend-deepgram", "bluetooth", "usb", "airpods"}
+VOICE_CHAT = HERE / "voice_chat.py"
 
 
 # ---- shared state ----------------------------------------------------------------------
@@ -180,6 +181,8 @@ def checks():
 
 def agent_args(cfg, mode=None, agent=None, quiet=None):
     mode = mode or cfg["mode"]
+    if mode == "airpods":                       # live voice chat through AirPods, no band
+        return [sys.executable, "-u", str(VOICE_CHAT), "--json-events", "--workdir", cfg["workdir"]]
     args = [sys.executable, "-u", str(AGENT), str(cfg["band"]), "--json-events",
             "--agent", agent or cfg["agent"], "--workdir", cfg["workdir"],
             "--permission-mode", cfg["permission_mode"]]
@@ -219,8 +222,10 @@ def start():
     if hub.proc and hub.proc.poll() is None:
         return "Already running."
     cfg = load_config()
-    if not cfg["band"]:
+    if not cfg["band"] and cfg["mode"] != "airpods":
         raise ValueError("Set your band number first.")
+    if cfg["mode"] == "airpods" and not key_found("OPENAI_API_KEY"):
+        raise ValueError("AirPods voice chat needs OPENAI_API_KEY in .env.")
     if not Path(cfg["workdir"]).is_dir():
         raise ValueError("The agent folder does not exist.")
     hub.add({"type": "line", "text": "Starting: mode=%s agent=%s" % (cfg["mode"], cfg["agent"])})

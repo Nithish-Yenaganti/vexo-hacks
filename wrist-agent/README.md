@@ -70,6 +70,20 @@ Not linked yet? `ln -sf "$PWD/bin/wrist" ~/.local/bin/wrist` in this folder.
 
 Light: dim = ready, yellow = working, green = done, red = problem.
 
+## AirPods voice chat (no band)
+
+Menu: **Band → AirPods voice chat (no band)**, then **Start**. Just talk: OpenAI's Realtime
+model (`gpt-realtime-2.1`) answers out loud in about a second, and you can interrupt it.
+Ask for anything on screen ("open ChatGPT and start a new chat") and it runs computer use
+while you keep talking; it tells you the result. Say "stop" to stop the computer.
+
+- Connect your AirPods first: it picks them automatically. With the Mac's speakers the
+  model hears itself, so use headphones.
+- macOS asks once for the **Microphone** for Wrist Agent.
+- Your voice goes to OpenAI while it runs. `OPENAI_REALTIME_MODEL` and
+  `OPENAI_REALTIME_VOICE` in `.env` change the model and voice.
+- No mic at hand? `voice_chat.py --say-file speech.pcm` plays a 24 kHz recording instead.
+
 ## Computer use
 
 Pick **Computer use: control this Mac** as the agent and say things like *"open Safari

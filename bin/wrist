@@ -20,7 +20,8 @@ running() { lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; }
 make_app() {
   "$ROOT/start.sh" --setup-only || exit 1
   mkdir -p "$APP/Contents/MacOS" "$HOME/Library/Logs"
-  cat > "$APP/Contents/Info.plist" <<PL
+  PLIST_NEW="$(mktemp)"
+  cat > "$PLIST_NEW" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -32,16 +33,22 @@ make_app() {
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSUIElement</key><true/>
   <key>NSBluetoothAlwaysUsageDescription</key><string>Wrist Agent connects to your Vexo band over Bluetooth.</string>
-  <key>NSMicrophoneUsageDescription</key><string>Wrist Agent does not use this Mac's microphone; the band has its own.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Wrist Agent listens through your AirPods or this Mac's microphone for voice chat.</string>
 </dict></plist>
 PL
   # Rebuild only when the launcher changed: a new build is a new signature, and macOS
   # would then forget the permissions you gave.
   BIN="$APP/Contents/MacOS/wrist-agent"
+  CHANGED=""
+  if ! cmp -s "$PLIST_NEW" "$APP/Contents/Info.plist"; then mv "$PLIST_NEW" "$APP/Contents/Info.plist"; CHANGED=1; else rm -f "$PLIST_NEW"; fi
   if [ ! -x "$BIN" ] || [ "$ROOT/wrist-agent/launcher.c" -nt "$BIN" ] || head -c 2 "$BIN" | grep -q '#!'; then
     clang -O2 -DROOT="\"$ROOT\"" -DLOG="\"$LOG\"" -o "$BIN" "$ROOT/wrist-agent/launcher.c" || { echo "Could not build the app (needs Xcode command line tools: xcode-select --install)"; exit 1; }
+    CHANGED=1
+  fi
+  if [ -n "$CHANGED" ]; then
     codesign --force --sign - --identifier com.vexohacks.wristagent "$APP" >/dev/null 2>&1
-    echo "Built Wrist Agent.app. If computer use was allowed before, turn Wrist Agent off and on again in Screen Recording and Accessibility."
+    echo "Updated Wrist Agent.app. macOS sees it as changed: in Privacy & Security, remove Wrist Agent from"
+    echo "Screen & System Audio Recording and Accessibility, add it again (+), then: wrist stop && wrist"
   fi
 }
 config() { "$ROOT/.venv/bin/python" -c "import sys; sys.path.insert(0, '$ROOT/wrist-agent'); import server, json; $1"; }
