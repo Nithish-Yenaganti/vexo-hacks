@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone receiver · Grab the Screen</title><link rel="stylesheet" href="/style.css">
+</head>
+<body class="receiver">
+<main>
+  <header class="masthead"><h1>Grab the Screen</h1><p>Phone receiver</p></header>
+  <section class="screen" aria-label="Phone player">
+    <video id="video" src="/demo.mp4?v=roman-podcast-1" playsinline preload="auto" muted></video>
+    <div class="screen-footer"><span>Phone player</span><strong id="playback">Standing by</strong></div>
+  </section>
+  <section class="phone-controls" aria-label="Phone setup">
+    <button id="sound" type="button" hidden>Unmute podcast</button>
+    <button id="enable" type="button">Enable motion</button>
+    <output id="motion-state" aria-live="polite">Motion is off</output>
+    <p id="status" role="status">Tap Enable motion, then allow access in Safari.</p>
+  </section>
+</main>
+<script type="module" src="/phone.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone setup · Grab the Screen</title><link rel="stylesheet" href="/style.css">
+</head>
+<body class="receiver">
+<main>
+  <header class="masthead">
+    <h1>Connect this phone</h1>
+    <p>Your phone can reach the laptop.</p>
+  </header>
+  <section class="phone-controls" aria-label="Phone setup">
+    <p>On iPhone, motion access requires a trusted HTTPS connection.</p>
+    <ol>
+      <li><a class="address" href="/local-ca.crt">Download the laptop’s demo certificate</a></li>
+      <li>Install the downloaded profile in Settings → General → VPN &amp; Device Management.</li>
+      <li>In Settings → General → About → Certificate Trust Settings, enable full trust for Grab the Screen local demo CA.</li>
+      <li>Return here, open the receiver, and tap <strong>Enable motion</strong>.</li>
+    </ol>
+    <a class="address" id="receiver-link">Open phone receiver</a>
+    <p id="status" role="status"></p>
+  </section>
+</main>
+<script type="module" src="/setup.js"></script>
+</body>
+</html>

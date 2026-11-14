@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grab the Screen</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <h1>Grab the Screen</h1>
+    <p>Pick up your phone with your band hand and give it a quick twist.</p>
+  </header>
+  <div class="desk">
+    <section class="screen" aria-label="Laptop player">
+      <video id="video" src="/demo.mp4?v=roman-podcast-1" playsinline controls preload="auto"></video>
+      <div class="screen-footer"><span>Laptop player</span><strong id="playback">Ready to play</strong></div>
+    </section>
+    <section class="setup" aria-label="Connection setup">
+      <div class="row">
+        <div><h2>Vexo band</h2><p id="band-status" role="status">Double-tap the band to wake it.</p></div>
+        <button id="connect" type="button">Pair band</button>
+      </div>
+      <div class="row phone-row">
+        <div><h2>Phone receiver</h2><p id="phone-status" role="status">Waiting for phone motion</p></div>
+        <button id="copy" type="button" class="secondary" disabled>Copy setup link</button>
+      </div>
+      <a id="setup-link" class="address"></a>
+      <details>
+        <summary>Phone setup and Wi-Fi help</summary>
+        <p>Open the setup link in iPhone Safari. If it won’t load, turn on iPhone Personal Hotspot and connect the Mac to it. This link updates when the Mac gets a new address.</p>
+        <a id="phone-link" class="address"></a>
+      </details>
+      <div class="row match-row"><h2>Motion match</h2><span id="score">Waiting</span></div>
+      <p id="motion-inputs">Band waiting · Phone waiting</p>
+      <p id="status" role="status">Pair the band and enable motion on your phone.</p>
+      <button id="test-transfer" type="button" class="secondary" disabled>Test phone playback</button>
+      <button id="reset" type="button" class="secondary" disabled>Reset handoff</button>
+    </section>
+  </div>
+</main>
+<script type="module" src="/host.js"></script>
+</body>
+</html>
