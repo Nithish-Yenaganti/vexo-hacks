@@ -27,6 +27,8 @@ from AppKit import (
     NSWindowCollectionBehaviorStationary, NSWindowSharingNone, NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
+from AppKit import (NSEvent, NSEventMaskKeyDown, NSEventModifierFlagCommand, NSEventModifierFlagControl,
+                    NSEventModifierFlagOption)
 from Foundation import NSObject, NSTimer
 from PyObjCTools import AppHelper
 
@@ -36,11 +38,11 @@ import server  # noqa: E402  (sets the working folder to the project, where .env
 COLOURS = {  # state -> (r, g, b)
     "stopped": (0.55, 0.55, 0.55), "starting": (0.55, 0.55, 0.55), "ready": (0.92, 0.92, 0.92),
     "listening": (0.20, 0.45, 1.00), "working": (1.00, 0.67, 0.00), "speaking": (0.15, 0.80, 0.35),
-    "error": (1.00, 0.25, 0.20), "chat": (0.92, 0.92, 0.92),
+    "error": (1.00, 0.25, 0.20), "chat": (0.92, 0.92, 0.92), "muted": (0.85, 0.30, 0.30),
 }
 LABELS = {"stopped": "Stopped", "starting": "Connecting to the band…", "ready": "Ready · tap the band to talk",
           "listening": "Listening… tap when you're done", "working": "Working…", "speaking": "Speaking",
-          "error": "Problem", "chat": "Listening · just talk"}
+          "error": "Problem", "chat": "Listening · just talk", "muted": "Muted · ⌃⌥M to unmute"}
 AGENTS = [("claude", "Claude Code"), ("codex", "OpenAI Codex"), ("computer", "Computer use (this Mac)"),
           ("echo", "Echo (test)")]
 MODES = [("pretend", "Pretend band (type in panel)"), ("pretend-deepgram", "Pretend band + Deepgram"),
@@ -77,6 +79,14 @@ class Controller(NSObject):
         self.build_pill()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.25, self, "tick:", None, True)
+        # ⌃⌥M anywhere mutes/unmutes voice chat (a global key watch needs Accessibility, which computer use has)
+        def on_key(event):
+            flags = event.modifierFlags()
+            if event.charactersIgnoringModifiers() and event.charactersIgnoringModifiers().lower() in ("m", "µ") \
+                    and flags & NSEventModifierFlagControl and flags & NSEventModifierFlagOption \
+                    and not flags & NSEventModifierFlagCommand:
+                AppHelper.callAfter(self.toggleMute_, None)
+        self.key_watch = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskKeyDown, on_key)
         if server.load_config()["agent"] == "computer":   # make macOS list this app and ask, once
             import computer
             if not all(computer.permissions()):
@@ -134,6 +144,9 @@ class Controller(NSObject):
             self.add(menu, "“%s”" % self.detail[:70])
         menu.addItem_(NSMenuItem.separatorItem())
         self.add(menu, "Stop" if running else "Start", "toggleRun:")
+        if running and cfg["mode"] == "airpods":
+            self.add(menu, "Unmute microphone   ⌃⌥M" if server.hub.muted else "Mute microphone   ⌃⌥M",
+                     "toggleMute:", on=server.hub.muted)
         menu.addItem_(NSMenuItem.separatorItem())
         sub = self.submenu("Agent")
         for key, name in AGENTS:
@@ -192,6 +205,12 @@ class Controller(NSObject):
             except ValueError as e:
                 self.flash(str(e))
         threading.Thread(target=go, daemon=True).start()   # stopping can take a few seconds
+
+    def toggleMute_(self, sender):
+        try:
+            self.flash(server.set_mute(None))
+        except ValueError as e:
+            self.flash(str(e))
 
     def pickAgent_(self, sender):
         self.save(agent=sender.representedObject())
@@ -379,6 +398,8 @@ class Controller(NSObject):
             text = self.reply
         else:
             text = self.detail if time.time() - self.detail_at < 10 else ""
+        if state == "muted":
+            text = "Nothing you say is sent. Press ⌃⌥M or use the menu to unmute."
         if shown == "error" and self.detail:
             text = self.detail
         self.layout_pill(LABELS.get(shown, shown), text, steps)

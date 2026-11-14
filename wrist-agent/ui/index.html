@@ -173,6 +173,7 @@
         <div class="gestures">
           <button id="tapbtn" title="Single tap">Tap</button>
           <button id="dblbtn" title="Double tap">Double-tap</button>
+          <button id="mutebtn" title="Mute or unmute the microphone (⌃⌥M)" hidden>Mute</button>
         </div>
       </div>
       <div class="help" id="help"></div>
@@ -255,6 +256,8 @@ async function refresh() {
     const b = $("startstop"); b.textContent = running ? "Stop" : "Start"; b.className = "big " + (running ? "danger" : "primary");
     document.querySelectorAll("[data-test]").forEach(x => x.disabled = !!s.test_running);
     renderMode();
+    const m = $("mutebtn"); m.hidden = !(running && s.config.mode === "airpods");
+    m.textContent = s.muted ? "Unmute" : "Mute"; m.className = s.muted ? "danger" : "";
   } catch (e) { $("state").textContent = "panel offline"; }
 }
 
@@ -306,6 +309,7 @@ $("sendbtn").onclick = () => { const v = $("say").value.trim(); if (v) { sendTex
 $("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("sendbtn").click(); });
 $("tapbtn").onclick = () => sendText("/tap");
 $("dblbtn").onclick = () => sendText("/double");
+$("mutebtn").onclick = async () => { try { toast((await api("/api/mute", {})).result); } catch (e) { toast(e.message); } refresh(); };
 $("envbtn").onclick = async () => { try { toast((await api("/api/env", {})).result); } catch (e) { toast(e.message); } refresh(); };
 document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => {
   if (dirty && !(await save())) return;

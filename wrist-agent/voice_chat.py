@@ -115,6 +115,7 @@ class VoiceChat:
         self.user_talking = False
         self.state = None
         self.state_lock = threading.Lock()
+        self.muted = False              # muted: no sound from the mic is sent at all
         self.responding = False         # the model is producing a reply right now
         self.want_reply = False         # ask for a reply as soon as that one is done
 
@@ -141,6 +142,14 @@ class VoiceChat:
                           "turn_detection": {"type": "semantic_vad", "interrupt_response": True}},
                 "output": {"format": {"type": "audio/pcm", "rate": RATE}, "voice": voice}},
             "tools": TOOLS, "tool_choice": "auto"}})
+
+    def set_muted(self, on):
+        self.muted = on
+        if on:
+            self.user_talking = False
+            self.send({"type": "input_audio_buffer.clear"})     # drop anything half-heard
+        emit("muted", on=on)
+        log("band", "Microphone muted: nothing you say is sent." if on else "Microphone on. Just talk.")
 
     def reply(self):
         """Ask the model to speak; only one reply at a time, so queue it if one is running."""
@@ -249,7 +258,7 @@ class VoiceChat:
             if self.computer_busy():
                 self.set_state("working")
             elif not (self.speaking or self.player.busy() or self.user_talking):
-                self.set_state("chat")
+                self.set_state("muted" if self.muted else "chat")
 
 
 def main():
@@ -301,15 +310,24 @@ def main():
             stop.set()
         threading.Thread(target=reader, daemon=True).start()
         threading.Thread(target=chat.idle_watch, daemon=True).start()
-        threading.Thread(target=lambda: [stop.set() for line in sys.stdin if line.strip() in ("/quit", "/q")],
-                         daemon=True).start()
+        def commands():                              # from the menu / panel: /mute, /unmute, /quit
+            for line in sys.stdin:
+                cmd = line.strip()
+                if cmd in ("/quit", "/q"):
+                    stop.set()
+                elif cmd in ("/mute", "/unmute", "/toggle-mute"):
+                    chat.set_muted(cmd == "/mute" or (cmd == "/toggle-mute" and not chat.muted))
+        threading.Thread(target=commands, daemon=True).start()
 
         mic_q = queue.Queue(maxsize=200)
         if a.say_file:
             pcm = Path(a.say_file).read_bytes() + b"\x00" * (RATE * 2 * 2)    # then 2 s of silence
-            for i in range(0, len(pcm), BLOCK * 2):
-                chat.mic(pcm[i:i + BLOCK * 2])
-                time.sleep(BLOCK / RATE)
+            def play():
+                for i in range(0, len(pcm), BLOCK * 2):
+                    if not chat.muted:
+                        chat.mic(pcm[i:i + BLOCK * 2])
+                    time.sleep(BLOCK / RATE)
+            threading.Thread(target=play, daemon=True).start()
             out = None
         else:
             def on_mic(data, frames, t, status):
@@ -327,9 +345,11 @@ def main():
         try:
             while not stop.is_set() and (end is None or time.time() < end):
                 try:
-                    chat.mic(mic_q.get(timeout=0.2))
+                    pcm = mic_q.get(timeout=0.2)
                 except queue.Empty:
-                    pass
+                    continue
+                if not chat.muted:
+                    chat.mic(pcm)
         except KeyboardInterrupt:
             pass
         finally:

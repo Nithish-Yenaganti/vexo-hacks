@@ -49,6 +49,7 @@ class Hub:
         self.state = "stopped"
         self.led = None
         self.test_running = None
+        self.muted = False
 
     def add(self, item):
         with self.lock:
@@ -59,6 +60,8 @@ class Hub:
             del self.events[:-3000]
             if item.get("type") == "state":
                 self.state = item["state"]
+            if item.get("type") == "muted":
+                self.muted = bool(item.get("on"))
             if item.get("type") == "led":
                 self.led = item.get("colour")
 
@@ -237,6 +240,7 @@ def start():
         read_lines(proc, hub.add)
         code = proc.wait()
         hub.add({"type": "line", "text": "Agent program ended (exit %s)." % code})
+        hub.muted = False
         hub.add({"type": "state", "state": "stopped"})
     threading.Thread(target=pump, daemon=True).start()
     return "Started."
@@ -261,6 +265,17 @@ def stop():
         except subprocess.TimeoutExpired:
             proc.kill()
     return "Stopped."
+
+
+def set_mute(on=None):
+    """Mute or unmute AirPods voice chat. on=None toggles."""
+    proc = hub.proc
+    if not proc or proc.poll() is not None or load_config()["mode"] != "airpods":
+        raise ValueError("Mute works while AirPods voice chat is running.")
+    want = (not hub.muted) if on is None else bool(on)
+    proc.stdin.write("/mute\n" if want else "/unmute\n")
+    proc.stdin.flush()
+    return "Muted." if want else "Unmuted."
 
 
 def send_input(text):
@@ -528,6 +543,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             running = bool(hub.proc and hub.proc.poll() is None)
             return self.reply(200, {"config": load_config(), "checks": checks(), "running": running,
+                                    "muted": hub.muted and running,
                                     "state": hub.state if running else "stopped", "led": hub.led,
                                     "test_running": hub.test_running})
         if path == "/api/events":
@@ -548,6 +564,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = start()
             elif path == "/api/stop":
                 result = stop()
+            elif path == "/api/mute":
+                result = set_mute(body.get("on"))
             elif path == "/api/input":
                 result = send_input(body.get("text", ""))
             elif path.startswith("/api/test/") and path[10:] in TESTS:
