@@ -40,7 +40,7 @@ An **always-listening, screenless AI wristband**. It records the conversations y
 | Module | Anodized aluminum, 49.3 × 26.4 × 10.2 mm, on a nylon strap |
 | Durability | IP54 (splash and sweat resistant) |
 | Battery | Up to 4 days of 24/7 listening; magnetic charger |
-| Input | **Microphone** (always listening while on) and a **physical button** (press to pause or resume listening) |
+| Input | **Microphone** (always listening while on), a **6-axis motion sensor** (IMU: 3-axis accelerometer + 3-axis gyroscope, confirmed on the demo unit), and a **physical button** (press to pause or resume listening) |
 | Output | **"Quiet haptics"** (a vibration motor) |
 | Screen | None |
 | Connectivity | **Bluetooth to the phone app**; uses the phone's Wi-Fi or cellular. The phone is required. |
@@ -54,7 +54,7 @@ An **always-listening, screenless AI wristband**. It records the conversations y
 | Button | ✅ Confirmed |
 | Haptic / vibration motor | ✅ Confirmed ("quiet haptics"). Whether developers can control it is **unconfirmed**. |
 | Heart rate / PPG / HRV | ⚠️ **Unconfirmed.** Third-party coverage (Dealroom, RuntimeWire) says "health sensors", but Vexo's own site, YC page and privacy policy don't mention any. |
-| IMU (accelerometer / gyroscope) | ❓ Not mentioned anywhere. Most wrist devices have one for wake and taps, but there's no evidence it is exposed. |
+| IMU (accelerometer / gyroscope) | ✅ **Confirmed on the demo product: 6-axis** (3-axis accelerometer + 3-axis gyroscope). Not on the public site. With no magnetometer, heading (yaw) will drift over time, so absolute pointing direction needs a re-zero. Whether we get a **raw stream** (and at what rate) is still to ask. |
 | Camera | ❌ None mentioned. The product is voice-only. |
 | Location | Comes from the **phone**, with permission, not from the band. |
 
@@ -70,12 +70,12 @@ An **always-listening, screenless AI wristband**. It records the conversations y
 - Approval gating: you choose what runs automatically. Sending messages, changing your calendar and placing orders wait for your OK.
 
 ### Developer access
-**No public SDK, API or developer docs exist** on vexoai.com or elsewhere that we could find. The event says participants build with **"Vexo voice technology,"** so whatever access we get will most likely be voice, transcripts and memory, and maybe agent hooks (an MCP-style connection to Claude or Codex is likely, given that they advertise Claude, Codex and Cursor). Raw sensor streams are probably not part of it.
+**No public SDK, API or developer docs exist** on vexoai.com or elsewhere that we could find. The event says participants build with **"Vexo voice technology,"** so whatever access we get will most likely be voice, transcripts and memory, and maybe agent hooks (an MCP-style connection to Claude or Codex is likely, given that they advertise Claude, Codex and Cursor). The demo product has **two inputs worth building on: the microphone and the 6-axis IMU**, so motion data may well be available too.
 
 ### Questions for the Vexo team at the event
 1. What do hackers actually get: an SDK, a REST API, an MCP server, webhooks, raw BLE?
 2. Can we **trigger custom haptic patterns** (intensity, timing)?
-3. Does the band have an **IMU**, and can we stream it (for gestures, taps, wrist orientation)?
+3. Can we **stream the 6-axis IMU** (raw accel + gyro), at what sample rate and latency, over BLE or through their SDK? Is there on-band gesture detection (tap, flick, raise)?
 4. Does it have **any biosignal sensor** (PPG, heart rate, HRV, skin temperature, EDA)?
 5. Can we get transcripts **in real time** (streaming), or only after processing?
 6. Can a button press be used as a custom trigger?
@@ -93,7 +93,7 @@ A wearable that senses the stress and anxiety your body produces when you're ner
 ### Idea 2 (current): point and command your coding agent
 Wear the band, **point at something on your laptop screen** with your finger, and **say what to do** ("fix this", "explain that error", "make this button blue"). Your AI or coding agent then acts on exactly what you pointed at. This fits the brief: voice plus a real-world gesture instead of typing.
 
-**The catch:** the band has **no camera** and **no confirmed IMU stream**, so it can't work out where you're pointing by itself. The way to build it:
+**The catch:** the band has **no camera**. Its **6-axis IMU** can tell which way the wrist is aimed (relative tilt and turn), but without a magnetometer the heading drifts, so it can't reliably say *which screen pixel* on its own. Best combo: webcam for absolute position, IMU for fast, smooth movement and gestures. The way to build it:
 
 | Piece | How |
 |---|---|
@@ -102,7 +102,7 @@ Wear the band, **point at something on your laptop screen** with your finger, an
 | **What to do** | **Vexo voice** captures the command. If we can't get a real-time stream, fall back to a laptop mic or ElevenLabs/OpenAI speech-to-text. |
 | **Doing it** | Send {command + screenshot crop + element context} to Claude Code, Codex or Cursor (e.g. an MCP tool such as `act_on_pointed_target`). |
 | **Feedback** | A band **haptic buzz** when the target locks or the task finishes, if haptics are exposed; otherwise an on-screen highlight or sound. |
-| **Optional** | If the band has an IMU, use a wrist flick or tap as the "confirm / execute" trigger instead of a voice word. |
+| **Gestures (IMU)** | Wrist flick or double-tap = "confirm / execute"; small wrist tilts nudge the cursor; IMU alone can act as an air-mouse after a "look at center" re-zero if the webcam fails. |
 
 **Demo:** point at a red error in the terminal and say "fix this". The agent patches the code, the band buzzes, and the test passes.
 

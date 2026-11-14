@@ -39,3 +39,10 @@ tmp/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# The Vexo kit (cloned, not ours)
+vexo-open-kit/
+
+# Wrist Agent local settings
+wrist-agent/config.json
+recording.ogg

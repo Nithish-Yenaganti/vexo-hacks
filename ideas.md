@@ -19,7 +19,7 @@ Goal: **win**, meaning first place, sponsor prizes, and the YC final interview.
 
 | Sponsor | What we'd use | Best "moment" |
 |---|---|---|
-| **Vexo** | Always-on mic, conversation memory, button, quiet haptics, links to Claude/Codex | Wrist as the input; **button press = approve**; haptic buzz = done |
+| **Vexo** | Always-on mic, **6-axis IMU (accel + gyro)**, conversation memory, button, quiet haptics, links to Claude/Codex | Wrist as the input; **a real handshake (detected by the IMU) = approve**; haptic buzz = done |
 | **Deepgram** | Fast streaming speech-to-text, **diarization (who said what)**, Voice Agent API | Labelling the speakers in a real conversation as it happens |
 | **OpenAI** | GPT reasoning, Realtime API, vision, Agents SDK, Codex | Planning, structured extraction, coding |
 | **Google DeepMind** | Gemini (multimodal, long context), Gemini Live (streaming camera + audio) | Seeing the screen or the room; reasoning over a whole day of memory |
@@ -42,14 +42,14 @@ Goal: **win**, meaning first place, sponsor prizes, and the YC final interview.
 1. You're talking to someone (a freelancer, a vendor, a friend). Vexo and Deepgram transcribe it and work out **who said what**.
 2. A Mastra agent (running on GPT or Gemini) spots a **commitment**: "I'll pay you $300 for the logo by Friday", "let's book dinner for 6 at 7pm", "can you send me the deck?"
 3. The band **buzzes**, and your earbuds or phone say (ElevenLabs): *"Invoice Sam $300, due Friday?"*
-4. You **press the band's button** to approve. Mastra's suspend/resume waits for that press.
+4. You **literally shake hands** to approve. The band's **6-axis IMU** detects the handshake (a short burst of up-down oscillation, roughly 2–5 Hz, with the wrist held sideways). Mastra's suspend/resume waits for that gesture. A wrist flick or the button is the fallback; shaking your wrist "no" (side to side) cancels.
 5. The agent acts:
    - **Stripe:** creates and sends a Payment Link or Invoice to the other person.
    - **Brex:** pays with a card that has a **spend limit** ("team dinner budget: $400"), and the receipt and expense memo fill in automatically.
    - **ElevenLabs / Marvlabs voice agent:** **phones the restaurant** live to book the table.
 6. Haptic buzz: done. A dashboard shows the paper trail.
 
-**Why it wins:** it's a real-world interaction with no screen, it makes the band the trusted approval device, it covers the money theme of both Stripe and Brex, and the startup story is clear ("Vexo does the next step, and Handshake is the money layer"). The live phone call on stage is a big moment.
+**Why it wins:** it's a real-world interaction with no screen, the name is the gesture (the handshake *is* the signature), it uses **both** of the band's real inputs (voice + motion), it makes the band the trusted approval device, it covers the money theme of both Stripe and Brex, and the startup story is clear ("Vexo does the next step, and Handshake is the money layer"). The live phone call on stage is a big moment.
 
 **Sponsors:** Vexo, Deepgram, OpenAI or Gemini, Mastra, Stripe, Brex, ElevenLabs, plus Marvlabs if it's voice agents. **7–8 of them, all needed.**
 
@@ -62,7 +62,7 @@ Goal: **win**, meaning first place, sponsor prizes, and the YC final interview.
 
 **Flow:** point your finger at the screen (webcam hand tracking, or Gemini Live watching the camera) and say *"make this a checkout page"* or *"fix this error"*.
 - Gemini works out *what* you're pointing at (a screenshot crop plus vision).
-- Deepgram or Vexo captures the command, and Mastra routes it.
+- Deepgram or Vexo captures the command, and Mastra routes it. The band's **IMU** refines the aim (wrist tilt nudges the highlight) and a **wrist flick** confirms, with no "go" word needed.
 - Codex or OpenAI writes the code, and **Superserve** runs and tests it in a sandbox.
 - *"Add payments here"* makes the agent create a **Stripe** product and Payment Link and add it to the page.
 - ElevenLabs reads out the result, and the band buzzes when it's deployed.
@@ -99,14 +99,16 @@ Keep Idea B's pointing as a **stretch feature**: "Point at the invoice on screen
 ## 5. Architecture (Idea A)
 
 ```
-Vexo Band (mic, button, haptics)
+Vexo Band (mic, 6-axis IMU, button, haptics)
    │ BLE → phone app → Vexo memory / agent hooks   (fallback: phone/laptop mic)
+   ├─ audio ─────────────► Deepgram
+   └─ accel+gyro stream ─► gesture detector (handshake = approve, side-shake = cancel, flick = fallback)
    ▼
 Deepgram streaming STT + diarization  ──►  transcript with speakers
    ▼
 Mastra workflow
    ├─ detectCommitment (GPT / Gemini, structured output: {type, amount, who, when})
-   ├─ confirm → ElevenLabs TTS prompt + band haptic → SUSPEND until button press
+   ├─ confirm → ElevenLabs TTS prompt + band haptic → SUSPEND until handshake gesture
    └─ execute (tools):
         ├─ stripe.createInvoice / paymentLink      (test mode)
         ├─ brex.cardCharge + expense memo           (sandbox, spend limits)
@@ -116,7 +118,8 @@ Dashboard (Next.js): live transcript, pending approvals, receipts trail
 ```
 
 **Fallbacks (decide during the first hour):**
-- If we can't get the Vexo button or haptics in real time → approve with a phone tap and vibrate the phone. Still show the band as the mic.
+- If we can't get the IMU stream in real time → approve with the button; if not that either, a phone tap (and the phone's own accelerometer for the handshake). Still show the band as the mic.
+- If handshake detection is flaky → require handshake **and** a voice "yes", or tune thresholds on a few recorded handshakes in hour 1.
 - If the live call is risky → call a teammate's phone acting as the restaurant.
 - If the Brex sandbox is slow → Stripe Issuing virtual card with spending controls.
 
@@ -128,27 +131,27 @@ Dashboard (Next.js): live transcript, pending approvals, receipts trail
 |---|---|
 | **Before the event** | Make accounts and get API keys for every sponsor (Stripe test mode, Brex sandbox, Deepgram, ElevenLabs + phone number, OpenAI, Gemini, Superserve). Read the Mastra quickstart. **Check the rules** on pre-written code. |
 | **Hour 0–1** | Ask the Vexo team the 7 questions in vexo-band.md. Lock the scope and the fallbacks. Split roles. |
-| **Hour 1–4** | Audio → Deepgram → commitment detection working end to end in the terminal. |
+| **Hour 1–4** | Audio → Deepgram → commitment detection working end to end in the terminal. In parallel: stream the IMU, record ~20 handshakes and non-handshakes, tune the detector. |
 | **Hour 4–6** | Mastra approval loop (suspend/resume) + Stripe invoice + ElevenLabs confirmation voice. |
 | **Hour 6–8** | Brex spend + outbound phone call. Dashboard. |
 | **Hour 8–9** | **Freeze features.** Rehearse the demo 5+ times. Record a backup video. |
 | **Last hour** | Polish the pitch: problem, live demo, why now, what's next. |
 
-**Roles (team of 3–4):** (1) audio + Vexo integration, (2) Mastra agent + tools, (3) Stripe/Brex/voice calls, (4) dashboard + demo + pitch.
+**Roles (team of 3–4):** (1) audio + Vexo integration + IMU gesture detection, (2) Mastra agent + tools, (3) Stripe/Brex/voice calls, (4) dashboard + demo + pitch.
 
 ---
 
 ## 7. Demo script (2 minutes)
 
 1. **Hook (15s):** "Every day you agree to things out loud and then forget to do them. What if shaking hands *was* the paperwork?"
-2. **Live (75s):** a teammate plays a freelancer. They agree on $300 for a logo. The band buzzes, an ElevenLabs voice asks, *press*, and a Stripe invoice shows up on the freelancer's phone. Then: "let's celebrate, dinner for 4 at 7." *Press.* The phone call to the restaurant plays on the speakers, and the Brex card is charged within the team budget.
+2. **Live (75s):** a teammate plays a freelancer. They agree on $300 for a logo. The band buzzes, an ElevenLabs voice asks, **they shake hands**, and a Stripe invoice shows up on the freelancer's phone. Then: "let's celebrate, dinner for 4 at 7." *Wrist flick.* The phone call to the restaurant plays on the speakers, and the Brex card is charged within the team budget.
 3. **Show the trail (15s):** dashboard with the transcript, approvals and receipts.
 4. **Close (15s):** "Vexo remembers. Handshake makes it happen. Next: shared wallets for teams."
 
 ---
 
 ## 8. Open questions to settle at the event
-- What does Vexo give us in real time: audio, transcripts, the button, haptics?
+- What does Vexo give us in real time: audio, transcripts, **IMU (rate, latency)**, the button, haptics?
 - What is **Marvlabs**, and do they have their own prize?
 - Do sponsors have separate prize tracks, and what is each one's criteria?
 - Is there a Brex sandbox or API access for hackers?

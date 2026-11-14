@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wrist Agent</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6a64; --line: #e4e2dc;
+    --accent: #2f5bea; --accent-ink: #ffffff; --ok: #1f8a4c; --bad: #c2362b; --warn: #b7791f;
+    --soft: #f0efea; --you: #e8eefe; --agent: #f0efea; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9a998f; --line: #2f2e2a;
+      --accent: #6d8cff; --accent-ink: #0d0d0c; --ok: #4cc27f; --bad: #ff6b5e; --warn: #e0a84a;
+      --soft: #262623; --you: #1f2a4a; --agent: #262623; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .grow { flex: 1; }
+  .led { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: #333;
+    transition: background .2s, box-shadow .2s; }
+  .pill { padding: 4px 10px; border-radius: 99px; background: var(--soft); font-size: 13px; font-weight: 550; }
+  .pill.running { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 20px; padding: 20px 24px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 14px 16px; } }
+  .col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    margin: 0 0 14px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
+  label:first-of-type { margin-top: 0; }
+  input, select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  button { font: inherit; font-weight: 550; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--soft); color: var(--ink); cursor: pointer; }
+  button:hover { filter: brightness(0.97); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
+  button.big { width: 100%; padding: 13px; font-size: 16px; margin-top: 16px; }
+  .checks { list-style: none; margin: 0; padding: 0; }
+  .checks li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .checks li:first-child { border-top: 0; }
+  .checks .mark { font-weight: 700; }
+  .checks .ok .mark { color: var(--ok); }
+  .checks .bad .mark { color: var(--bad); }
+  .checks .opt .mark { color: var(--warn); }
+  .checks .hint { color: var(--muted); font-size: 12.5px; }
+  .toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--ink); font-size: 14px; }
+  .toggle input { width: auto; }
+  .tests { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .result { padding: 9px 11px; border-radius: 8px; background: var(--soft); font-size: 13.5px; }
+  .result b { margin-right: 6px; }
+  .result.ok b { color: var(--ok); } .result.bad b { color: var(--bad); }
+  .chat { height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+  .bubble { max-width: 80%; padding: 10px 13px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .bubble.you { align-self: flex-end; background: var(--you); border-bottom-right-radius: 4px; }
+  .bubble.agent { align-self: flex-start; background: var(--agent); border-bottom-left-radius: 4px; }
+  .bubble.sys { align-self: center; background: none; color: var(--muted); font-size: 13px; padding: 2px; }
+  .bubble .who { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 2px; font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; margin: auto; max-width: 360px; }
+  .composer { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .composer input { flex: 1 1 240px; }
+  .gestures { display: flex; gap: 8px; }
+  .help { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  pre.log { height: 200px; overflow: auto; margin: 0; font: 12px/1.5 var(--mono); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+    padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; margin-top: 10px; }
+  .legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--c); margin-right: 5px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <div class="led" id="led" title="The band's light"></div>
+  <div>
+    <h1>Wrist Agent</h1>
+    <div class="sub">Talk to your coding agent through the Vexo band</div>
+  </div>
+  <div class="grow"></div>
+  <span class="pill" id="state">stopped</span>
+</header>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>1 · Connect</h2>
+      <label for="band">Band number (on the band's bag)</label>
+      <input id="band" inputmode="numeric" placeholder="e.g. the number on your bag" autocomplete="off">
+      <label for="mode">Band</label>
+      <select id="mode">
+        <option value="pretend">Pretend band: type what you'd say (no hardware, no keys)</option>
+        <option value="pretend-deepgram">Pretend band + real Deepgram on a sample recording</option>
+        <option value="bluetooth">Real band over Bluetooth</option>
+        <option value="usb">Real band on the USB cable</option>
+      </select>
+      <label for="agent">Coding agent</label>
+      <select id="agent">
+        <option value="claude">Claude Code</option>
+        <option value="echo">Echo (fake agent, for testing)</option>
+      </select>
+      <label for="workdir">Folder the agent works in</label>
+      <input id="workdir" autocomplete="off">
+      <div class="row">
+        <div>
+          <label for="perm">Agent permissions</label>
+          <select id="perm">
+            <option value="acceptEdits">Edit files (safe default)</option>
+            <option value="plan">Plan only, no changes</option>
+            <option value="default">Ask for everything</option>
+          </select>
+        </div>
+        <div>
+          <label for="tools">Also allow</label>
+          <input id="tools" placeholder='e.g. Bash(npm test:*)' autocomplete="off">
+        </div>
+      </div>
+      <label class="toggle"><input type="checkbox" id="voice"> Speak replies out loud</label>
+      <button class="big primary" id="startstop">Start</button>
+    </section>
+
+    <section>
+      <h2>2 · Setup checklist</h2>
+      <ul class="checks" id="checks"></ul>
+      <div class="row" style="margin-top:12px">
+        <button id="envbtn">Open .env</button>
+        <button data-test="install">Install band libraries</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>3 · Tests</h2>
+      <div class="tests">
+        <button data-test="selftest" class="primary">Self-test (no keys)</button>
+        <button data-test="agent">Test Claude Code</button>
+        <button data-test="deepgram">Test Deepgram</button>
+        <button data-test="voice">Test voice</button>
+      </div>
+      <div class="results" id="results"></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>Conversation</h2>
+      <div class="chat" id="chat"><div class="empty" id="empty">Press Start. With the pretend band, type below what you'd say. With a real band: tap to talk, double-tap to send.</div></div>
+      <div class="composer" id="composer">
+        <input id="say" placeholder="What you'd say to the band…" autocomplete="off">
+        <button class="primary" id="sendbtn">Say it</button>
+        <div class="gestures">
+          <button id="tapbtn" title="Single tap">Tap</button>
+          <button id="dblbtn" title="Double tap">Double-tap</button>
+        </div>
+      </div>
+      <div class="help" id="help"></div>
+      <div class="legend">
+        <span style="--c:#202020">ready</span><span style="--c:#0040ff">mic on</span>
+        <span style="--c:#ffaa00">working</span><span style="--c:#00ff40">done</span><span style="--c:#ff0000">problem</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <pre class="log" id="log"></pre>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (id) => document.getElementById(id);
+let since = 0, running = false, cfg = null, dirty = false;
+
+async function api(path, body) {
+  const opts = { headers: { "X-Token": TOKEN } };
+  if (body !== undefined) { opts.method = "POST"; opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
+
+function formConfig() {
+  return { band: $("band").value.trim(), mode: $("mode").value, agent: $("agent").value, workdir: $("workdir").value.trim(),
+           permission_mode: $("perm").value, allowed_tools: $("tools").value.trim(), voice: $("voice").checked };
+}
+function fillForm(c) {
+  $("band").value = c.band ?? ""; $("mode").value = c.mode; $("agent").value = c.agent; $("workdir").value = c.workdir;
+  $("perm").value = c.permission_mode; $("tools").value = c.allowed_tools; $("voice").checked = c.voice;
+}
+async function save() {
+  try { cfg = (await api("/api/config", formConfig())).result; dirty = false; refresh(); return true; }
+  catch (e) { toast(e.message); return false; }
+}
+["band","mode","agent","workdir","perm","tools","voice"].forEach(id => $(id).addEventListener("change", () => { dirty = true; save(); }));
+
+function renderChecks(list) {
+  const ul = $("checks"); ul.replaceChildren();
+  for (const c of list) {
+    const li = document.createElement("li");
+    li.className = c.ok ? "ok" : (c.optional ? "opt" : "bad");
+    const m = document.createElement("span"); m.className = "mark"; m.textContent = c.ok ? "✓" : (c.optional ? "–" : "✗");
+    const d = document.createElement("div"); d.textContent = c.label;
+    if (!c.ok) { const h = document.createElement("div"); h.className = "hint"; h.textContent = c.hint; d.appendChild(h); }
+    li.append(m, d); ul.appendChild(li);
+  }
+}
+function renderMode() {
+  const m = $("mode").value;
+  const typed = m === "pretend", pretend = m.startsWith("pretend");
+  $("say").disabled = $("sendbtn").disabled = !(running && typed);
+  $("tapbtn").disabled = $("dblbtn").disabled = !(running && pretend);
+  $("help").textContent = !running ? "" :
+    typed ? "Type a sentence and press Enter: it goes tap → your words → double-tap, like on the band." :
+    pretend ? "Tap, wait while the sample recording plays, then Double-tap to send what Deepgram heard." :
+    "Tap the band to talk (light goes blue), double-tap to send. Tap to stop it talking.";
+}
+
+async function refresh() {
+  try {
+    const s = await api("/api/status");
+    if (!cfg || !dirty) { cfg = s.config; if (document.activeElement?.tagName !== "INPUT") fillForm(cfg); }
+    running = s.running;
+    renderChecks(s.checks);
+    $("state").textContent = s.state; $("state").classList.toggle("running", running);
+    $("led").style.background = running && s.led ? s.led : "#333";
+    $("led").style.boxShadow = running && s.led ? "0 0 14px " + s.led : "none";
+    const b = $("startstop"); b.textContent = running ? "Stop" : "Start"; b.className = "big " + (running ? "danger" : "primary");
+    document.querySelectorAll("[data-test]").forEach(x => x.disabled = !!s.test_running);
+    renderMode();
+  } catch (e) { $("state").textContent = "panel offline"; }
+}
+
+function bubble(kind, who, text) {
+  $("empty")?.remove();
+  const d = document.createElement("div"); d.className = "bubble " + kind;
+  if (who) { const w = document.createElement("span"); w.className = "who"; w.textContent = who; d.appendChild(w); }
+  d.appendChild(document.createTextNode(text));
+  const chat = $("chat"); chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+function logLine(text) { const l = $("log"); l.textContent += text + "\n"; l.scrollTop = l.scrollHeight; }
+
+async function poll() {
+  try {
+    const { events } = await api("/api/events?since=" + since);
+    for (const e of events) {
+      since = e.i + 1;
+      const t = new Date(e.at * 1000).toLocaleTimeString();
+      if (e.type === "log") {
+        logLine(`${t}  ${e.who.padEnd(6)} ${e.text}`);
+        if (e.who === "you") bubble("you", "You", e.text);
+        else if (e.who === "agent") bubble("agent", "Agent", e.text);
+        else if (e.who === "...") bubble("sys", "", "heard: " + e.text);
+      } else if (e.type === "line") logLine(`${t}  ${e.text}`);
+      else if (e.type === "state") { logLine(`${t}  state  ${e.state}`); }
+      else if (e.type === "started") bubble("sys", "", `Connected to ${e.band} · agent: ${e.agent} · voice: ${e.voice}`);
+      else if (e.type === "question" && e.pending) bubble("sys", "", "Double-tap for yes, or tap to answer out loud.");
+      else if (e.type === "test") {
+        const r = document.createElement("div"); r.className = "result " + (e.ok ? "ok" : "bad");
+        const b = document.createElement("b"); b.textContent = (e.ok ? "✓ " : "✗ ") + e.name;
+        r.append(b, document.createTextNode(e.detail)); $("results").prepend(r);
+        logLine(`${t}  test   ${e.name}: ${e.ok ? "pass" : "FAIL"}`);
+      }
+    }
+    if (events.length) refresh();
+  } catch (e) {}
+  setTimeout(poll, 400);
+}
+
+$("startstop").onclick = async () => {
+  try {
+    if (running) { await api("/api/stop", {}); }
+    else { if (!(await save())) return; await api("/api/start", {}); }
+  } catch (e) { toast(e.message); }
+  setTimeout(refresh, 300);
+};
+async function sendText(text) { try { await api("/api/input", { text }); } catch (e) { toast(e.message); } }
+$("sendbtn").onclick = () => { const v = $("say").value.trim(); if (v) { sendText(v); $("say").value = ""; } };
+$("say").addEventListener("keydown", (e) => { if (e.key === "Enter") $("sendbtn").click(); });
+$("tapbtn").onclick = () => sendText("/tap");
+$("dblbtn").onclick = () => sendText("/double");
+$("envbtn").onclick = async () => { try { toast((await api("/api/env", {})).result); } catch (e) { toast(e.message); } refresh(); };
+document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => {
+  if (dirty && !(await save())) return;
+  try { await api("/api/test/" + b.dataset.test, {}); toast(b.textContent + ": running…"); } catch (e) { toast(e.message); }
+  refresh();
+});
+
+refresh(); poll(); setInterval(refresh, 4000);
+</script>
+</body>
+</html>
