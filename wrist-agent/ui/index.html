@@ -109,6 +109,8 @@
       <label for="agent">Coding agent</label>
       <select id="agent">
         <option value="claude">Claude Code</option>
+        <option value="codex">OpenAI Codex</option>
+        <option value="computer">Computer use: control this Mac (OpenAI)</option>
         <option value="echo">Echo (fake agent, for testing)</option>
       </select>
       <label for="workdir">Folder the agent works in</label>
@@ -127,6 +129,13 @@
           <input id="tools" placeholder='e.g. Bash(npm test:*)' autocomplete="off">
         </div>
       </div>
+      <label for="vengine">Voice</label>
+      <select id="vengine">
+        <option value="auto">Auto: OpenAI, else ElevenLabs, else Mac voice</option>
+        <option value="openai">OpenAI TTS</option>
+        <option value="elevenlabs">ElevenLabs</option>
+        <option value="say">Mac built-in voice (no key)</option>
+      </select>
       <label class="toggle"><input type="checkbox" id="voice"> Speak replies out loud</label>
       <button class="big primary" id="startstop">Start</button>
     </section>
@@ -144,9 +153,10 @@
       <h2>3 · Tests</h2>
       <div class="tests">
         <button data-test="selftest" class="primary">Self-test (no keys)</button>
-        <button data-test="agent">Test Claude Code</button>
+        <button data-test="agent">Test agent</button>
         <button data-test="deepgram">Test Deepgram</button>
         <button data-test="voice">Test voice</button>
+        <button data-test="computer">Test computer control</button>
       </div>
       <div class="results" id="results"></div>
     </section>
@@ -196,17 +206,19 @@ function toast(text) { const t = $("toast"); t.textContent = text; t.classList.a
 
 function formConfig() {
   return { band: $("band").value.trim(), mode: $("mode").value, agent: $("agent").value, workdir: $("workdir").value.trim(),
-           permission_mode: $("perm").value, allowed_tools: $("tools").value.trim(), voice: $("voice").checked };
+           permission_mode: $("perm").value, allowed_tools: $("tools").value.trim(), voice: $("voice").checked,
+           voice_engine: $("vengine").value };
 }
 function fillForm(c) {
   $("band").value = c.band ?? ""; $("mode").value = c.mode; $("agent").value = c.agent; $("workdir").value = c.workdir;
   $("perm").value = c.permission_mode; $("tools").value = c.allowed_tools; $("voice").checked = c.voice;
+  $("vengine").value = c.voice_engine || "auto";
 }
 async function save() {
   try { cfg = (await api("/api/config", formConfig())).result; dirty = false; refresh(); return true; }
   catch (e) { toast(e.message); return false; }
 }
-["band","mode","agent","workdir","perm","tools","voice"].forEach(id => $(id).addEventListener("change", () => { dirty = true; save(); }));
+["band","mode","agent","workdir","perm","tools","voice","vengine"].forEach(id => $(id).addEventListener("change", () => { dirty = true; save(); }));
 
 function renderChecks(list) {
   const ul = $("checks"); ul.replaceChildren();

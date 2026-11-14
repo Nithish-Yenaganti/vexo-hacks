@@ -1,0 +1,56 @@
+#!/bin/bash
+# wrist: run Wrist Agent from any folder.
+#   wrist              start it in the background (menu-bar dot + floating pill)
+#   wrist here         make the folder you are in the agent's project folder
+#   wrist stop         quit it
+#   wrist status       is it running, and with which settings
+#   wrist panel        open the browser control panel
+#   wrist log          follow its log
+#   wrist login on     start it automatically when you log in   (wrist login off: stop that)
+ROOT="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+PORT=8765
+PIDFILE="$HOME/.wrist-agent.pid"
+LOG="$HOME/Library/Logs/WristAgent.log"
+PLIST="$HOME/Library/LaunchAgents/com.vexohacks.wristagent.plist"
+running() { lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; }
+config() { "$ROOT/.venv/bin/python" -c "import sys; sys.path.insert(0, '$ROOT/wrist-agent'); import server, json; $1"; }
+
+case "${1:-start}" in
+  start)
+    if running; then echo "Wrist Agent is already running: look for the dot in the menu bar."; exit 0; fi
+    "$ROOT/start.sh" --background ;;
+  here)
+    [ -x "$ROOT/.venv/bin/python" ] || "$ROOT/start.sh" --setup-only || exit 1
+    WRIST_DIR="$PWD" config "import os; server.save_config({'workdir': os.environ['WRIST_DIR']})" && echo "Agent folder is now: $PWD"
+    if running; then echo "(Press Stop then Start in the menu for it to take effect.)"; fi ;;
+  stop)
+    if [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null; then rm -f "$PIDFILE"; echo "Stopped.";
+    elif pkill -f "$ROOT/wrist-agent/app.py" || pkill -f "wrist-agent/app.py"; then echo "Stopped.";
+    else echo "It was not running."; fi ;;
+  status)
+    running && echo "Running (menu-bar dot). Panel: http://127.0.0.1:$PORT/" || echo "Not running. Start it with: wrist"
+    [ -x "$ROOT/.venv/bin/python" ] && config "c = server.load_config(); print('band %s · agent %s · %s · folder %s' % (c['band'] or 'not set', c['agent'], c['mode'], c['workdir']))" ;;
+  panel) running || { echo "Not running. Start it with: wrist"; exit 1; }; open "http://127.0.0.1:$PORT/" ;;
+  log) touch "$LOG"; tail -n 40 -f "$LOG" ;;
+  login)
+    case "$2" in
+      on)
+        mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+        cat > "$PLIST" <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.vexohacks.wristagent</string>
+  <key>ProgramArguments</key><array><string>$ROOT/start.sh</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+PL
+        echo "Wrist Agent will start when you log in. (Turn off with: wrist login off)" ;;
+      off) rm -f "$PLIST"; echo "It will no longer start at login." ;;
+      *) [ -f "$PLIST" ] && echo "Start at login: on" || echo "Start at login: off" ;;
+    esac ;;
+  help|-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown: $1. Try: wrist help"; exit 1 ;;
+esac

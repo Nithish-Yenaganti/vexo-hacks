@@ -20,7 +20,8 @@ NN is your team's band number, written on the band's bag.
 
 Keys (environment variables or a .env file in the folder you start in):
     DEEPGRAM_API_KEY    speech to text (real band, or --sim --deepgram)
-    ELEVENLABS_API_KEY  optional: nicer voice. Without it macOS `say` is used.
+    OPENAI_API_KEY      optional: OpenAI voice (preferred when set)
+    ELEVENLABS_API_KEY  optional: ElevenLabs voice. With neither, macOS `say` is used.
 """
 import argparse
 import json
@@ -32,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -115,7 +117,7 @@ class ClaudeCodeAgent:
                "--append-system-prompt", SPOKEN_STYLE, *self.extra]
         if self.session:
             cmd += ["--resume", self.session]
-        done = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True, timeout=900)
+        done = subprocess.run(cmd, cwd=self.workdir, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
         try:
             out = json.loads(done.stdout)
         except ValueError:
@@ -124,6 +126,50 @@ class ClaudeCodeAgent:
         if out.get("is_error"):
             raise RuntimeError(out.get("result") or "the agent reported an error")
         return (out.get("result") or "").strip() or "Done."
+
+
+class CodexAgent:
+    """OpenAI Codex CLI in headless mode (`codex exec`). One session, resumed every turn.
+    It may edit files in the working folder (sandbox workspace-write); "plan" = read-only."""
+
+    def __init__(self, workdir, permission_mode, model=None):
+        if not shutil.which("codex"):
+            raise SystemExit("Codex (the `codex` command) is not installed. Use --agent echo to test without it.")
+        self.workdir = workdir
+        self.sandbox = "read-only" if permission_mode == "plan" else "workspace-write"
+        self.model = model
+        self.session = None
+
+    def ask(self, text):
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            last = f.name
+        try:
+            common = ["--skip-git-repo-check", "--json", "-o", last] + (["-m", self.model] if self.model else [])
+            if self.session:
+                cmd = ["codex", "exec", "resume", *common, "-c", 'sandbox_mode="%s"' % self.sandbox,
+                       self.session, text]
+            else:
+                cmd = ["codex", "exec", *common, "-s", self.sandbox, SPOKEN_STYLE + "\n\nTask: " + text]
+            done = subprocess.run(cmd, cwd=self.workdir, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
+            problem = None
+            for line in done.stdout.splitlines():
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("type") == "thread.started":
+                    self.session = e.get("thread_id") or self.session
+                elif e.get("type") in ("turn.failed", "error"):
+                    problem = (e.get("error") or {}).get("message") if isinstance(e.get("error"), dict) \
+                        else e.get("message") or "the agent reported an error"
+            answer = open(last).read().strip()
+            if problem and not answer:
+                raise RuntimeError(problem)
+            if done.returncode != 0 and not answer:
+                raise RuntimeError((done.stderr or "codex failed").strip()[-300:])
+            return answer or "Done."
+        finally:
+            os.unlink(last)
 
 
 class EchoAgent:
@@ -139,54 +185,99 @@ class EchoAgent:
 # ---- voice: text -> sound --------------------------------------------------------------
 
 class Voice:
-    """Speaks in the background so a tap can interrupt it."""
+    """Speaks in the background so a tap can interrupt it.
 
-    def __init__(self, quiet=False, voice_id="21m00Tcm4TXvDq3nzCVL"):
-        self.quiet, self.voice_id = quiet, voice_id
-        self.eleven = secret("ELEVENLABS_API_KEY")
+    engine: "auto" (OpenAI if OPENAI_API_KEY is set, else ElevenLabs if its key is set,
+    else macOS say), or "openai", "elevenlabs", "say". A cloud voice that fails falls
+    back to say, so the reply is always heard."""
+
+    ENGINES = ("auto", "openai", "elevenlabs", "say")
+
+    def __init__(self, quiet=False, engine="auto"):
+        self.quiet = quiet
+        self.keys = {"openai": secret("OPENAI_API_KEY"), "elevenlabs": secret("ELEVENLABS_API_KEY")}
+        if engine == "auto":
+            engine = next((e for e in ("openai", "elevenlabs") if self.keys[e]), "say")
+        elif engine in self.keys and not self.keys[engine]:
+            log("voice", "no key for %s, using say" % engine)
+            engine = "say"
+        self.engine = engine
+        self.openai_model = secret("OPENAI_TTS_MODEL") or "gpt-4o-mini-tts"
+        self.openai_voice = secret("OPENAI_TTS_VOICE") or "alloy"
+        self.eleven_voice = secret("ELEVENLABS_VOICE_ID") or "21m00Tcm4TXvDq3nzCVL"
         self.proc = None
+        self.turn = 0                   # each speak() is a new turn; stop() cancels the current one
         self.lock = threading.Lock()
 
     @property
     def label(self):
-        return "off" if self.quiet else ("ElevenLabs" if self.eleven else "macOS say")
+        if self.quiet:
+            return "off"
+        return {"openai": "OpenAI %s (%s)" % (self.openai_model, self.openai_voice),
+                "elevenlabs": "ElevenLabs", "say": "macOS say"}[self.engine]
 
     def speak(self, text, then=None):
         self.stop()
+        with self.lock:
+            self.turn += 1
+            turn = self.turn
 
         def run():
             try:
                 if not self.quiet:
-                    self._play(text)
+                    self._play(text, turn)
             finally:
                 if then:
                     then()
         threading.Thread(target=run, daemon=True).start()
 
-    def _play(self, text):
-        cmd = None
-        if self.eleven:
-            try:
-                req = urllib.request.Request(
-                    "https://api.elevenlabs.io/v1/text-to-speech/%s" % self.voice_id,
-                    data=json.dumps({"text": text, "model_id": "eleven_flash_v2_5"}).encode(),
-                    headers={"xi-api-key": self.eleven, "Content-Type": "application/json", "Accept": "audio/mpeg"})
-                with urllib.request.urlopen(req, timeout=20) as r, \
-                        tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                    f.write(r.read())
-                cmd = ["afplay", f.name]
-            except Exception as e:                       # fall back to the built-in voice
-                log("voice", "ElevenLabs failed (%s), using say" % type(e).__name__)
-        if cmd is None:
-            if not shutil.which("say"):
-                return
-            cmd = ["say", text]
-        with self.lock:
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.proc.wait()
+    def _fetch(self, text):
+        """The reply as an mp3 file from the cloud voice, or None."""
+        if self.engine == "openai":
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/audio/speech",
+                data=json.dumps({"model": self.openai_model, "voice": self.openai_voice, "input": text,
+                                 "response_format": "mp3",
+                                 "instructions": "Speak like a calm, friendly coding partner. Brief and clear."}).encode(),
+                headers={"Authorization": "Bearer " + self.keys["openai"], "Content-Type": "application/json"})
+        elif self.engine == "elevenlabs":
+            req = urllib.request.Request(
+                "https://api.elevenlabs.io/v1/text-to-speech/%s" % self.eleven_voice,
+                data=json.dumps({"text": text, "model_id": "eleven_flash_v2_5"}).encode(),
+                headers={"xi-api-key": self.keys["elevenlabs"], "Content-Type": "application/json",
+                         "Accept": "audio/mpeg"})
+        else:
+            return None
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r, \
+                    tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                f.write(r.read())
+            return f.name
+        except urllib.error.HTTPError as e:              # status only: never what was sent
+            log("voice", "%s answered %s, using say" % (self.engine, e.code))
+        except Exception as e:
+            log("voice", "%s failed (%s), using say" % (self.engine, type(e).__name__))
+        return None
+
+    def _play(self, text, turn):
+        audio = self._fetch(text)
+        cmd = ["afplay", audio] if audio else (["say", text] if shutil.which("say") else None)
+        try:
+            with self.lock:
+                if cmd is None or turn != self.turn:     # stopped while the sound was being made
+                    return
+                self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.proc.wait()
+        finally:
+            if audio:
+                try:
+                    os.unlink(audio)
+                except OSError:
+                    pass
 
     def stop(self):
         with self.lock:
+            self.turn += 1
             if self.proc and self.proc.poll() is None:
                 self.proc.terminate()
 
@@ -229,7 +320,11 @@ class WristAgent:
             self.voice.stop()
             self.start_listening()
         elif self.state == "working":
-            log("band", "still working...")
+            if hasattr(self.agent, "cancel"):
+                self.agent.cancel()
+                log("band", "stopping after this step...")
+            else:
+                log("band", "still working...")
 
     def on_double_tap(self):
         if self.state == "listening":
@@ -345,12 +440,15 @@ def main():
     p.add_argument("--usb", action="store_true", help="use the USB cable instead of Bluetooth")
     p.add_argument("--deepgram", action="store_true",
                    help="with --sim: real Deepgram on the kit's sample recording instead of typing")
-    p.add_argument("--agent", choices=["claude", "echo"], default="claude")
+    p.add_argument("--agent", choices=["claude", "codex", "computer", "echo"], default="claude")
+    p.add_argument("--codex-model", default="", help="model for Codex (empty = Codex's default)")
     p.add_argument("--workdir", default=os.getcwd(), help="the folder the coding agent works in")
     p.add_argument("--permission-mode", default="acceptEdits",
                    help="Claude Code permission mode (default acceptEdits: edits yes, shell commands need --allowed-tools)")
     p.add_argument("--allowed-tools", default="", help='passed to Claude Code, e.g. "Bash(npm test:*)"')
     p.add_argument("--quiet", action="store_true", help="print replies, do not speak them")
+    p.add_argument("--voice", choices=Voice.ENGINES, default="auto",
+                   help="who speaks the replies: auto (OpenAI, else ElevenLabs, else say), openai, elevenlabs, say")
     p.add_argument("--seconds", type=float, help="stop after this many seconds")
     p.add_argument("--json-events", action="store_true", help="machine-readable output for the control panel")
     a = p.parse_args()
@@ -374,13 +472,25 @@ def main():
                                                                        audio_packets=packets))
         else:
             band = Band.connect(a.number, transport="serial" if a.usb else "ble", auto_reconnect=True)
-        make_ears = speech.create
+        model = secret("DEEPGRAM_MODEL") or "nova-3"
+        make_ears = lambda: speech.create(model=model)                           # noqa: E731
+        log("setup", "speech: Deepgram %s" % model)
         print("Note: while the light is solid blue, the mic's sound goes to Deepgram. Tell people nearby.")
 
     workdir = str(Path(a.workdir).expanduser().resolve())
     extra = ["--allowedTools", a.allowed_tools] if a.allowed_tools else []
-    agent = EchoAgent() if a.agent == "echo" else ClaudeCodeAgent(workdir, a.permission_mode, extra)
-    voice = Voice(quiet=a.quiet)
+    if a.agent == "echo":
+        agent = EchoAgent()
+    elif a.agent == "computer":
+        import computer
+        agent = computer.ComputerAgent(secret("OPENAI_API_KEY"), model=secret("OPENAI_COMPUTER_MODEL"),
+                                       tool=secret("OPENAI_COMPUTER_TOOL"), on_step=lambda t: log("act", t))
+        print("Note: computer use sends screenshots of your screen to OpenAI. Tap the band to stop it.", flush=True)
+    elif a.agent == "codex":
+        agent = CodexAgent(workdir, a.permission_mode, a.codex_model or None)
+    else:
+        agent = ClaudeCodeAgent(workdir, a.permission_mode, extra)
+    voice = Voice(quiet=a.quiet, engine=a.voice)
     log("setup", "agent=%s  workdir=%s  voice=%s" % (a.agent, workdir, voice.label))
     emit("started", band=band.name, sim=a.sim, agent=a.agent, voice=voice.label)
 

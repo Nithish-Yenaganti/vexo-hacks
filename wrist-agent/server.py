@@ -32,7 +32,8 @@ PORT = int(os.environ.get("WRIST_AGENT_PORT", "8765"))
 
 os.chdir(ROOT)                                   # .env is read from here
 DEFAULTS = {"band": None, "mode": "pretend", "agent": "claude", "workdir": str(ROOT),
-            "permission_mode": "acceptEdits", "allowed_tools": "", "voice": True}
+            "permission_mode": "acceptEdits", "allowed_tools": "", "voice": True, "voice_engine": "auto"}
+VOICES = ("auto", "openai", "elevenlabs", "say")
 MODES = {"pretend", "pretend-deepgram", "bluetooth", "usb"}
 
 
@@ -92,10 +93,12 @@ def save_config(new):
         cfg["band"] = band
     if cfg["mode"] not in MODES:
         raise ValueError("Unknown mode.")
-    if cfg["agent"] not in ("claude", "echo"):
+    if cfg["agent"] not in ("claude", "codex", "computer", "echo"):
         raise ValueError("Unknown agent.")
     cfg["workdir"] = str(Path(cfg["workdir"]).expanduser())
     cfg["voice"] = bool(cfg["voice"])
+    if cfg["voice_engine"] not in VOICES:
+        raise ValueError("Unknown voice.")
     CONFIG.write_text(json.dumps(cfg, indent=2))
     return cfg
 
@@ -124,6 +127,24 @@ def env_ignored():
         return False
 
 
+def computer_checks(cfg):
+    need = cfg["agent"] == "computer"
+    sys.path.insert(0, str(HERE))
+    import computer
+    screen, access = computer.permissions()
+    return [
+        {"id": "pyautogui", "label": "Computer control library (pyautogui)",
+         "ok": bool(importlib.util.find_spec("pyautogui")), "optional": not need,
+         "hint": "Run ./start.sh again: it installs it."},
+        {"id": "screen", "label": "Screen Recording permission", "ok": screen, "optional": not need,
+         "hint": "System Settings > Privacy & Security > Screen Recording: turn on your terminal app, "
+                 "then quit it and run ./start.sh again."},
+        {"id": "access", "label": "Accessibility permission (click and type)", "ok": access, "optional": not need,
+         "hint": "System Settings > Privacy & Security > Accessibility: turn on your terminal app, "
+                 "then quit it and run ./start.sh again."},
+    ]
+
+
 def checks():
     cfg = load_config()
     wd = Path(cfg["workdir"]).expanduser()
@@ -137,7 +158,10 @@ def checks():
         {"id": "serial", "label": "USB library (pyserial)", "ok": bool(importlib.util.find_spec("serial")),
          "hint": "Only for the USB cable.", "optional": True},
         {"id": "claude", "label": "Claude Code installed", "ok": bool(shutil.which("claude")),
-         "hint": "Install Claude Code, or pick the Echo test agent."},
+         "hint": "Install Claude Code, or pick another agent.", "optional": cfg["agent"] != "claude"},
+        {"id": "codex", "label": "Codex installed", "ok": bool(shutil.which("codex")),
+         "hint": "Install the Codex CLI, or pick another agent.", "optional": cfg["agent"] != "codex"},
+        *computer_checks(cfg),
         {"id": "workdir", "label": "Agent folder exists", "ok": wd.is_dir(), "hint": "Pick an existing folder."},
         {"id": "env", "label": ".env file", "ok": (ROOT / ".env").is_file(),
          "hint": "Press Create .env, then add your keys in it."},
@@ -145,8 +169,10 @@ def checks():
          "hint": "Add .env to .gitignore before putting keys in it."},
         {"id": "deepgram", "label": "Deepgram key", "ok": key_found("DEEPGRAM_API_KEY"),
          "hint": "DEEPGRAM_API_KEY in .env. Needed for speech from a real band."},
-        {"id": "eleven", "label": "ElevenLabs key", "ok": key_found("ELEVENLABS_API_KEY"),
-         "hint": "ELEVENLABS_API_KEY in .env. Optional: without it the Mac voice is used.", "optional": True},
+        {"id": "openai", "label": "OpenAI key (voice)", "ok": key_found("OPENAI_API_KEY"),
+         "hint": "OPENAI_API_KEY in .env, for the OpenAI voice.", "optional": cfg["voice_engine"] != "openai"},
+        {"id": "eleven", "label": "ElevenLabs key (voice)", "ok": key_found("ELEVENLABS_API_KEY"),
+         "hint": "ELEVENLABS_API_KEY in .env. Optional.", "optional": cfg["voice_engine"] != "elevenlabs"},
     ]
 
 
@@ -165,6 +191,7 @@ def agent_args(cfg, mode=None, agent=None, quiet=None):
         args.append("--usb")
     if cfg["allowed_tools"]:
         args += ["--allowed-tools", cfg["allowed_tools"]]
+    args += ["--voice", cfg["voice_engine"]]
     if quiet if quiet is not None else not cfg["voice"]:
         args.append("--quiet")
     return args
@@ -263,11 +290,11 @@ def test_selftest(cfg):
             cond.notify_all()
     threading.Thread(target=read_lines, args=(proc, sink), daemon=True).start()
 
-    def wait_for(pred, timeout):
+    def wait_for(pred, timeout, start=0):
         end = time.time() + timeout
         with cond:
             while time.time() < end:
-                for e in seen:
+                for e in seen[start:]:
                     if pred(e):
                         return e
                 cond.wait(0.2)
@@ -289,8 +316,7 @@ def test_selftest(cfg):
             reply = wait_for(lambda e: e.get("type") == "log" and e.get("who") == "agent"
                              and "hello from the self test" in e.get("text", ""), 10)
             steps.append(("agent reply comes back", bool(reply)))
-            steps.append(("back to ready", bool(wait_for(
-                lambda e: e.get("state") == "ready" and seen.index(e) > start_at + 3, 10))))
+            steps.append(("back to ready", bool(wait_for(lambda e: e.get("state") == "ready", 10, start_at))))
             say("should I deploy now")
             steps.append(("agent asks a yes/no question", bool(wait_for(
                 lambda e: e.get("type") == "question" and e.get("pending"), 10))))
@@ -309,6 +335,8 @@ def test_selftest(cfg):
 
 
 def test_agent(cfg):
+    if cfg["agent"] == "codex":
+        return test_codex(cfg)
     if not shutil.which("claude"):
         return report("Claude Code", False, "The claude command is not installed.")
     try:
@@ -326,6 +354,21 @@ def test_agent(cfg):
         report("Claude Code", False, "Could not read the answer. Run `claude` once in a terminal to log in.")
 
 
+def test_codex(cfg):
+    if not shutil.which("codex"):
+        return report("Codex", False, "The codex command is not installed.")
+    sys.path.insert(0, str(HERE))
+    import wrist_agent
+    try:
+        text = wrist_agent.CodexAgent(cfg["workdir"], "plan").ask("Reply with exactly the word OK. Do not run commands.")
+        ok = "OK" in text.upper()
+        report("Codex", ok, ("Replied: " if ok else "Unexpected answer: ") + text[:160])
+    except subprocess.TimeoutExpired:
+        report("Codex", False, "No answer in 15 minutes.")
+    except RuntimeError as e:
+        report("Codex", False, str(e)[:240] + " (Run `codex login` in a terminal if it is a login problem.)")
+
+
 def test_deepgram(cfg):
     if not key_found("DEEPGRAM_API_KEY"):
         return report("Deepgram", False, "No DEEPGRAM_API_KEY in .env yet.")
@@ -337,7 +380,11 @@ def test_deepgram(cfg):
         "from vexo_open.transports.sim import SimTransport\n"
         "p = audio.ogg_packets(kit.SAMPLE_SPEECH)\n"
         "b = Band.connect(%d, transport=SimTransport(%d, auto_tap=False, audio_packets=p))\n"
-        "print('HEARD:' + speech.listen(b, 6))\n"
+        "import os\n"
+        "m = None\n"
+        "try: m = speech.find_key('DEEPGRAM_MODEL')\n"
+        "except Exception: pass\n"
+        "print('HEARD:' + speech.listen(b, 6, model=m or 'nova-3'))\n"
         "b.disconnect()\n" % (str(KIT / "examples" / "python"), cfg["band"], cfg["band"]))
     try:
         done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
@@ -354,11 +401,12 @@ def test_deepgram(cfg):
 def test_voice(cfg):
     sys.path.insert(0, str(HERE))
     import wrist_agent
-    v = wrist_agent.Voice()
+    v = wrist_agent.Voice(engine=cfg["voice_engine"])
+    wrist_agent.JSON_EVENTS = False
     finished = threading.Event()
     v.speak("Wrist agent voice check. You should hear me.", then=finished.set)
     finished.wait(30)
-    report("Voice", True, "Played with %s. Did you hear it?" % v.label)
+    report("Voice", True, "Played with %s. Did you hear it? (A failed cloud voice falls back to the Mac voice: check the log.)" % v.label)
 
 
 def install_libs(cfg):
@@ -368,7 +416,31 @@ def install_libs(cfg):
     report("Install band libraries", done.returncode == 0, (last[-1] if last else "")[:240])
 
 
-TESTS = {"selftest": test_selftest, "agent": test_agent, "deepgram": test_deepgram,
+def test_computer(cfg):
+    sys.path.insert(0, str(HERE))
+    import computer
+    screen, access = computer.permissions()
+    if not importlib.util.find_spec("pyautogui"):
+        return report("Computer control", False, "pyautogui is missing: run ./start.sh again.")
+    try:
+        import pyautogui
+        w, h = pyautogui.size()
+        agent = computer.ComputerAgent.__new__(computer.ComputerAgent)
+        agent.width, agent.height = w, h
+        size = len(agent.screenshot())
+    except Exception as e:
+        if not screen:
+            return report("Computer control", False, "Cannot see the screen: give your terminal app Screen Recording "
+                          "(System Settings > Privacy & Security), quit it, and run ./start.sh again.")
+        return report("Computer control", False, "Screenshot failed: %s" % e)
+    problems = [p for p, ok in (("Screen Recording", screen), ("Accessibility", access)) if not ok]
+    report("Computer control", not problems,
+           "Screen %dx%d, screenshot works (%d kB). " % (w, h, size // 1024) +
+           ("Missing permission: %s (see the checklist)." % ", ".join(problems) if problems
+            else "Permissions OK. Nothing was clicked."))
+
+
+TESTS = {"selftest": test_selftest, "computer": test_computer, "agent": test_agent, "deepgram": test_deepgram,
          "voice": test_voice, "install": install_libs}
 
 
@@ -397,9 +469,9 @@ def create_env():
         return "There is a .env already."
     if not env_ignored():
         raise ValueError(".env is not in .gitignore. Add it there first.")
-    env.write_text("# Wrist Agent keys. Never commit this file.\n"
-                   "DEEPGRAM_API_KEY=\n"
-                   "ELEVENLABS_API_KEY=\n")
+    example = ROOT / ".env.example"
+    env.write_text(example.read_text() if example.is_file() else
+                   "# Wrist Agent keys. Never commit this file.\nDEEPGRAM_API_KEY=\nELEVENLABS_API_KEY=\n")
     os.chmod(env, 0o600)
     subprocess.run(["open", "-e", str(env)]) if sys.platform == "darwin" else None
     return "Created .env. Add your keys after the = signs and save."
