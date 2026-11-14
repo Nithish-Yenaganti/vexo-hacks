@@ -27,6 +27,7 @@ from AppKit import (
     NSWindowCollectionBehaviorStationary, NSWindowSharingNone, NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
+from AppKit import NSBezelStyleCircular, NSButton, NSImage
 from AppKit import (NSEvent, NSEventMaskKeyDown, NSEventModifierFlagCommand, NSEventModifierFlagControl,
                     NSEventModifierFlagOption)
 from Foundation import NSObject, NSTimer
@@ -296,6 +297,7 @@ class Controller(NSObject):
         p.setHasShadow_(True)
         p.setIgnoresMouseEvents_(True)            # clicks go to the app underneath
         p.setHidesOnDeactivate_(False)
+        p.setBecomesKeyOnlyIfNeeded_(True)        # clicking the mic button never takes focus from your app
         p.setSharingType_(NSWindowSharingNone)    # not in screenshots: computer use never sees it
         p.setCollectionBehavior_(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                                  | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorIgnoresCycle)
@@ -319,6 +321,17 @@ class Controller(NSObject):
             v.setMaximumNumberOfLines_(0)
         for v in (self.pill_dot, self.pill_title, self.pill_text, self.pill_steps):
             bg.addSubview_(v)
+        # Mic button (AirPods voice chat): click to mute or unmute. The pill is click-through
+        # except while this button is shown, and never while computer use is clicking.
+        self.mic_button = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 34, 34))
+        self.mic_button.setBezelStyle_(NSBezelStyleCircular)
+        self.mic_button.setBordered_(True)
+        self.mic_button.setTarget_(self)
+        self.mic_button.setAction_("toggleMute:")
+        self.mic_button.setHidden_(True)
+        self.mic_button.setToolTip_("Mute or unmute (⌃⌥M)")
+        bg.addSubview_(self.mic_button)
+        self.mic_shown = None
         p.setAlphaValue_(0.0)
         p.orderFrontRegardless()
         self.pill = p
@@ -327,11 +340,11 @@ class Controller(NSObject):
         self.changed_at = 0.0
 
     @objc.python_method
-    def layout_pill(self, title, text, steps):
-        if (title, text, steps) == self.pill_last:
+    def layout_pill(self, title, text, steps, mic=False):
+        if (title, text, steps, mic) == self.pill_last:
             return
-        self.pill_last = (title, text, steps)
-        pad, inner = 18, PILL_W - 62
+        self.pill_last = (title, text, steps, mic)
+        pad, inner = 18, PILL_W - 62 - (44 if mic else 0)
         self.pill_title.setStringValue_(title)
         self.pill_text.setStringValue_(text)
         self.pill_steps.setStringValue_(steps)
@@ -349,6 +362,8 @@ class Controller(NSObject):
             self.pill_steps.setFrame_(NSMakeRect(44, y, inner, h_steps))
         self.pill_text.setHidden_(not h_text)
         self.pill_steps.setHidden_(not h_steps)
+        self.mic_button.setFrame_(NSMakeRect(PILL_W - 52, height - pad - 27, 34, 34))
+        self.mic_button.setHidden_(not mic)
         vf = NSScreen.mainScreen().visibleFrame()
         self.pill.setFrame_display_(NSMakeRect(vf.origin.x + (vf.size.width - PILL_W) / 2,
                                                vf.origin.y + vf.size.height - height - 10, PILL_W, height), True)
@@ -402,10 +417,19 @@ class Controller(NSObject):
             text = "Nothing you say is sent. Press ⌃⌥M or use the menu to unmute."
         if shown == "error" and self.detail:
             text = self.detail
-        self.layout_pill(LABELS.get(shown, shown), text, steps)
+        mic = running and server.load_config()["mode"] == "airpods"
+        if mic and server.hub.muted != self.mic_shown:
+            self.mic_shown = server.hub.muted
+            name, tip = ("mic.slash.fill", "Unmute (⌃⌥M)") if server.hub.muted else ("mic.fill", "Mute (⌃⌥M)")
+            self.mic_button.setImage_(NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, tip))
+            self.mic_button.setContentTintColor_(colour("muted") if server.hub.muted else NSColor.labelColor())
+            self.mic_button.setToolTip_(tip)
+        self.layout_pill(LABELS.get(shown, shown), text, steps, mic)
+        # clickable only for the mic button, and never while computer use is clicking on screen
+        self.pill.setIgnoresMouseEvents_(not mic or state == "working")
         busy = state in ("starting", "listening", "working", "speaking")      # "chat" = idle, listening
         recent = time.time() - max(self.changed_at, self.detail_at) < 12
-        visible = self.pill_on and (busy or recent or shown == "error")
+        visible = self.pill_on and (busy or recent or shown == "error" or mic)   # voice chat: always there
         target = 1.0 if visible else 0.0
         if abs(self.pill.alphaValue() - target) > 0.01:
             self.pill.animator().setAlphaValue_(target)
