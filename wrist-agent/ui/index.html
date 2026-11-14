@@ -165,7 +165,7 @@
   <div class="col">
     <section>
       <h2>Conversation</h2>
-      <div class="chat" id="chat"><div class="empty" id="empty">Press Start. With the pretend band, type below what you'd say. With a real band: tap to talk, double-tap to send.</div></div>
+      <div class="chat" id="chat"><div class="empty" id="empty">Press Start. With the pretend band, type below what you'd say. With a real band: tap to talk, tap again to send.</div></div>
       <div class="composer" id="composer">
         <input id="say" placeholder="What you'd say to the band…" autocomplete="off">
         <button class="primary" id="sendbtn">Say it</button>
@@ -239,7 +239,7 @@ function renderMode() {
   $("help").textContent = !running ? "" :
     typed ? "Type a sentence and press Enter: it goes tap → your words → double-tap, like on the band." :
     pretend ? "Tap, wait while the sample recording plays, then Double-tap to send what Deepgram heard." :
-    "Tap the band to talk (light goes blue), double-tap to send. Tap to stop it talking.";
+    "Tap the band to talk (light goes blue), tap again to send. Tap to stop it talking.";
 }
 
 async function refresh() {

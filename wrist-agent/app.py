@@ -39,13 +39,13 @@ COLOURS = {  # state -> (r, g, b)
     "error": (1.00, 0.25, 0.20),
 }
 LABELS = {"stopped": "Stopped", "starting": "Connecting to the band…", "ready": "Ready · tap the band to talk",
-          "listening": "Listening… double-tap to send", "working": "Working…", "speaking": "Speaking",
+          "listening": "Listening… tap when you're done", "working": "Working…", "speaking": "Speaking",
           "error": "Problem"}
 AGENTS = [("claude", "Claude Code"), ("codex", "OpenAI Codex"), ("computer", "Computer use (this Mac)"),
           ("echo", "Echo (test)")]
 MODES = [("pretend", "Pretend band (type in panel)"), ("pretend-deepgram", "Pretend band + Deepgram"),
          ("bluetooth", "Real band · Bluetooth"), ("usb", "Real band · USB cable")]
-PILL_W, PILL_H = 440, 62
+PILL_W, PILL_H = 520, 62
 
 
 def colour(state, alpha=1.0):
@@ -76,6 +76,10 @@ class Controller(NSObject):
         self.build_pill()
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.25, self, "tick:", None, True)
+        if server.load_config()["agent"] == "computer":   # make macOS list this app and ask, once
+            import computer
+            if not all(computer.permissions()):
+                computer.request_permissions()
         return self
 
     # ---- menu bar -----------------------------------------------------------------------
@@ -142,6 +146,12 @@ class Controller(NSObject):
         self.add(menu, "Show floating pill", "togglePill:", on=self.pill_on)
         menu.addItem_(NSMenuItem.separatorItem())
         self.add(menu, "Run self-test", "selfTest:", enabled=not server.hub.test_running)
+        import computer
+        screen, access = computer.permissions()
+        if not (screen and access):
+            self.add(menu, "Allow computer control…  (needed for Computer use)", "allowComputer:")
+        else:
+            self.add(menu, "Computer control: allowed ✓")
         self.add(menu, "Open control panel", "openPanel:")
         self.add(menu, "Open .env", "openEnv:")
         menu.addItem_(NSMenuItem.separatorItem())
@@ -223,6 +233,15 @@ class Controller(NSObject):
         if panel.runModal() == 1:
             self.save(workdir=panel.URL().path())
 
+    def allowComputer_(self, sender):
+        import computer
+        screen, access = computer.request_permissions()
+        for key, ok in (("screen", screen), ("access", access)):
+            if not ok:
+                os.system("open '%s'" % computer.SETTINGS[key])
+        self.flash("Turn on “Wrist Agent” in Screen Recording and Accessibility, then Quit and start again."
+                   if not (screen and access) else "Computer control is allowed.")
+
     def selfTest_(self, sender):
         try:
             server.run_test("selftest")
@@ -244,13 +263,13 @@ class Controller(NSObject):
                          daemon=True).start()
 
     # ---- floating pill ------------------------------------------------------------------
+    # Grows with its text: a title (state), the main text (your words live while you talk,
+    # then the agent's full answer), and the agent's latest steps while it works.
     @objc.python_method
     def build_pill(self):
-        vf = NSScreen.mainScreen().visibleFrame()
-        rect = NSMakeRect(vf.origin.x + (vf.size.width - PILL_W) / 2,
-                          vf.origin.y + vf.size.height - PILL_H - 12, PILL_W, PILL_H)
         p = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            rect, NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel, NSBackingStoreBuffered, False)
+            NSMakeRect(0, 0, PILL_W, PILL_H), NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel,
+            NSBackingStoreBuffered, False)
         p.setLevel_(NSStatusWindowLevel)
         p.setOpaque_(False)
         p.setBackgroundColor_(NSColor.clearColor())
@@ -265,36 +284,83 @@ class Controller(NSObject):
         bg.setBlendingMode_(0)                    # behind window
         bg.setState_(1)                           # always active
         bg.setWantsLayer_(True)
-        bg.layer().setCornerRadius_(PILL_H / 2)
+        bg.layer().setCornerRadius_(18)
         bg.layer().setMasksToBounds_(True)
         p.setContentView_(bg)
-        self.pill_dot = label("●", 22)
-        self.pill_dot.setFrame_(NSMakeRect(20, 16, 28, 30))
+        self.pill_bg = bg
+        self.pill_dot = label("●", 20)
         self.pill_title = label("", 14, bold=True)
-        self.pill_title.setFrame_(NSMakeRect(52, 32, PILL_W - 76, 20))
-        self.pill_text = label("", 12.5, secondary=True)
-        self.pill_text.setFrame_(NSMakeRect(52, 12, PILL_W - 76, 18))
-        for v in (self.pill_dot, self.pill_title, self.pill_text):
+        self.pill_text = label("", 14)
+        self.pill_steps = label("", 12, secondary=True)
+        for v in (self.pill_text, self.pill_steps):
+            v.setLineBreakMode_(0)                # wrap by word
+            v.setUsesSingleLineMode_(False)
+            v.cell().setWraps_(True)
+            v.setMaximumNumberOfLines_(0)
+        for v in (self.pill_dot, self.pill_title, self.pill_text, self.pill_steps):
             bg.addSubview_(v)
         p.setAlphaValue_(0.0)
         p.orderFrontRegardless()
         self.pill = p
+        self.pill_last = None
+        self.heard, self.request, self.reply, self.steps = "", "", "", []
+        self.changed_at = 0.0
+
+    @objc.python_method
+    def layout_pill(self, title, text, steps):
+        if (title, text, steps) == self.pill_last:
+            return
+        self.pill_last = (title, text, steps)
+        pad, inner = 18, PILL_W - 62
+        self.pill_title.setStringValue_(title)
+        self.pill_text.setStringValue_(text)
+        self.pill_steps.setStringValue_(steps)
+        fit = lambda v: (v.cell().cellSizeForBounds_(NSMakeRect(0, 0, inner, 10000)).height if v.stringValue() else 0)
+        h_text, h_steps = min(fit(self.pill_text), 200), min(fit(self.pill_steps), 120)
+        height = pad + 20 + (6 + h_text if h_text else 0) + (6 + h_steps if h_steps else 0) + pad
+        y = height - pad - 20                      # lay out top to bottom
+        self.pill_dot.setFrame_(NSMakeRect(16, y - 3, 26, 26))
+        self.pill_title.setFrame_(NSMakeRect(44, y, inner, 20))
+        if h_text:
+            y -= 6 + h_text
+            self.pill_text.setFrame_(NSMakeRect(44, y, inner, h_text))
+        if h_steps:
+            y -= 6 + h_steps
+            self.pill_steps.setFrame_(NSMakeRect(44, y, inner, h_steps))
+        self.pill_text.setHidden_(not h_text)
+        self.pill_steps.setHidden_(not h_steps)
+        vf = NSScreen.mainScreen().visibleFrame()
+        self.pill.setFrame_display_(NSMakeRect(vf.origin.x + (vf.size.width - PILL_W) / 2,
+                                               vf.origin.y + vf.size.height - height - 10, PILL_W, height), True)
+        self.pill_bg.setFrame_(NSMakeRect(0, 0, PILL_W, height))
 
     def tick_(self, timer):
         for e in server.hub.since(self.since):
             self.since = e["i"] + 1
-            kind = e.get("type")
-            if kind == "log" and e.get("who") in ("you", "agent", "act", "..."):
-                prefix = {"you": "You: ", "agent": "", "act": "→ ", "...": "heard: "}[e["who"]]
-                self.detail, self.detail_at = prefix + e.get("text", ""), time.time()
-                if e["who"] == "agent" and e.get("text", "").startswith("problem:"):
-                    self.error_until = time.time() + 6
+            kind, who, text = e.get("type"), e.get("who"), e.get("text", "")
+            if kind == "state" and e.get("state") == "listening":
+                self.heard, self.reply, self.steps = "", "", []
+            elif kind == "heard":
+                self.heard = text
+            elif kind == "log" and who == "you":
+                self.request, self.heard, self.steps = text, "", []
+            elif kind == "log" and who == "act":
+                self.steps = (self.steps + [text])[-4:]
+            elif kind == "log" and who == "agent":
+                self.reply = text
+                if text.startswith("problem:"):
+                    self.error_until = time.time() + 8
             elif kind == "test":
                 self.flash(("✓ " if e.get("ok") else "✗ ") + e.get("name", "") + ": " + e.get("detail", ""))
                 if e.get("ok"):
                     self.error_until = 0
-            elif kind == "line" and ("Problem" in e.get("text", "") or "Could not" in e.get("text", "")):
-                self.flash(e["text"])
+            elif kind == "line" and ("Problem" in text or "Could not" in text):
+                self.flash(text)
+            else:
+                continue
+            self.changed_at = time.time()
+            if kind == "log" and who in ("you", "agent"):
+                self.detail, self.detail_at = ("You: " if who == "you" else "") + text, time.time()
         running = self.running()
         state = server.hub.state if running else "stopped"
         shown = "error" if time.time() < self.error_until else state
@@ -302,10 +368,22 @@ class Controller(NSObject):
             self.shown_state = shown
             self.paint_dot(shown)
             self.pill_dot.setTextColor_(colour(shown))
-        self.pill_title.setStringValue_(LABELS.get(shown, shown))
-        self.pill_text.setStringValue_(self.detail or ("Band %s" % (server.load_config()["band"] or "number not set")))
+        steps = ""
+        if state == "listening":
+            text = self.heard or "Say what you want…"
+        elif state == "working":
+            text = "You: " + self.request if self.request else ""
+            steps = "\n".join("• " + s for s in self.steps)
+        elif self.reply and state in ("speaking", "ready"):
+            text = self.reply
+        else:
+            text = self.detail if time.time() - self.detail_at < 10 else ""
+        if shown == "error" and self.detail:
+            text = self.detail
+        self.layout_pill(LABELS.get(shown, shown), text, steps)
         busy = state in ("starting", "listening", "working", "speaking")
-        visible = self.pill_on and (busy or time.time() - self.detail_at < 8 or shown == "error")
+        recent = time.time() - max(self.changed_at, self.detail_at) < 12
+        visible = self.pill_on and (busy or recent or shown == "error")
         target = 1.0 if visible else 0.0
         if abs(self.pill.alphaValue() - target) > 0.01:
             self.pill.animator().setAlphaValue_(target)

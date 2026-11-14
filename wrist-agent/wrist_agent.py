@@ -1,8 +1,7 @@
 """Wrist Agent: talk to your coding agent through the Vexo band.
 
     tap         start listening (the band's light goes solid blue: the mic is on)
-    double-tap  stop listening and send what you said to the coding agent
-    tap         while listening: cancel, nothing is sent
+    tap         again (or double-tap): send what you said; say nothing to cancel
     tap         while the reply is being spoken: stop talking and listen again
     double-tap  when the agent asked a yes/no question: answer "yes"
 
@@ -46,7 +45,19 @@ import speech  # noqa: E402
 from vexo_open.sync import Band, VexoError  # noqa: E402
 from vexo_open.transports.sim import SimTransport  # noqa: E402
 
+# Words Deepgram should expect (it heard "Codex" as "Cortex"). Add your own in .env:
+# DEEPGRAM_KEYTERMS=MyApp,My Project
+KEYTERMS = ["Codex", "Claude", "Claude Code", "Cursor", "VS Code", "Xcode", "Vexo", "GitHub", "Terminal",
+            "Safari", "Chrome", "Slack", "Notion", "Figma", "Finder", "Spotlight", "localhost", "commit",
+            "pull request", "npm", "Python"]
+# speech.py builds the Deepgram address with urlencode(query); a list must become one
+# keyterm=... per word, so let it repeat keys.
+speech.urlencode = lambda query: __import__("urllib.parse").parse.urlencode(query, doseq=True)
+
 DOUBLE_TAP_GRACE = 0.4        # seconds to wait after a tap in case it is the start of a double-tap
+SETTLE = 1.5                  # after a gesture starts or sends, ignore taps this long: over Bluetooth
+                              # with the mic on, the band's tap and double-tap events arrive late and
+                              # in pieces, and a leftover tap used to cancel or stop what you just did
 COLOURS = {"ready": "#202020", "working": "#ffaa00", "done": "#00ff40", "error": "#ff0000"}
 
 SPOKEN_STYLE = (
@@ -292,6 +303,7 @@ class WristAgent:
         self.ears = None
         self.question_pending = False
         self.tap_at = None              # a single tap waiting to see if a double-tap follows
+        self.quiet_until = 0.0          # taps before this are leftovers of the last gesture
         band.on("tap", lambda e: self.inbox.put(("tap", None)))
         band.on("double-tap", lambda e: self.inbox.put(("double-tap", None)))
         band.on("disconnect", lambda e: self.inbox.put(("lost", getattr(e, "reason", ""))))
@@ -313,9 +325,7 @@ class WristAgent:
         if self.state == "ready":
             self.start_listening()
         elif self.state == "listening":
-            self.stop_listening()
-            log("band", "cancelled, nothing sent")
-            self.set_ready()
+            self.finish_listening()            # tap again = send (a double-tap does the same)
         elif self.state == "speaking":
             self.voice.stop()
             self.start_listening()
@@ -328,25 +338,40 @@ class WristAgent:
 
     def on_double_tap(self):
         if self.state == "listening":
-            text = self.stop_listening()
-            log("you", text or "(nothing heard)")
-            if text:
-                self.send(text)
-            else:
-                self.say("I didn't catch that.", "ready")
+            self.finish_listening()
         elif self.state in ("ready", "speaking") and self.question_pending:
             self.voice.stop()
             log("you", "yes (double-tap)")
             self.send("Yes, go ahead.")
 
     # steps ----------------------------------------------------------------------------
+    def finish_listening(self):
+        self.quiet_until = time.time() + SETTLE
+        text = self.stop_listening()
+        log("you", text or "(nothing heard)")
+        if text:
+            self.send(text)
+        else:
+            self.say("I didn't catch that.", "ready")
+
     def start_listening(self):
+        self.quiet_until = time.time() + SETTLE
         self.set_state("listening")
         emit("led", colour="#0040ff", name="mic on")
-        self.ears = self.make_ears().start(lambda t, final: final and t and log("...", t))
+        ears = self.make_ears()
+        self.ears = ears
+
+        def heard(text, final):         # live words: everything final so far + the current guess
+            done = list(getattr(ears, "finals", []))
+            words = " ".join(done if final else done + [text]).strip()
+            if words:
+                emit("heard", text=words, final=bool(final))
+            if final and text:
+                log("...", text)
+        ears.start(heard)
         self.band.on("audio", self.ears.feed)
         self.band.configure(audio=True)            # solid blue: mic is on
-        log("band", "listening. double-tap to send, tap to cancel")
+        log("band", "listening. tap (or double-tap) when you are done")
 
     def stop_listening(self):
         self.band.configure(audio=False)
@@ -356,6 +381,7 @@ class WristAgent:
         return (text or "").strip()
 
     def send(self, text):
+        self.quiet_until = time.time() + SETTLE      # the rest of this gesture must not stop the agent
         self.set_state("working")
         self.question_pending = False
         self.light("working")
@@ -373,6 +399,7 @@ class WristAgent:
         self.voice.speak(text, then=lambda: self.inbox.put(("spoken", None)))
 
     def set_ready(self):
+        self.quiet_until = 0.0          # a new tap here is a new gesture
         self.set_state("ready")
         self.light("ready")
 
@@ -388,6 +415,10 @@ class WristAgent:
             try:
                 kind, data = self.inbox.get(timeout=0.05)
             except queue.Empty:
+                continue
+            if kind in ("tap", "double-tap") and time.time() < self.quiet_until:
+                log("band", "(ignored a %s: part of the last gesture)" % kind)
+                self.tap_at = None
                 continue
             if kind == "tap":
                 self.tap_at = time.time()
@@ -428,7 +459,7 @@ def type_to_band(band, typed, events):
         elif line:
             typed.append(line)
             sim.tap("tap")
-            time.sleep(DOUBLE_TAP_GRACE + 0.6)           # "speaking"
+            time.sleep(DOUBLE_TAP_GRACE + SETTLE + 0.4)  # "speaking" (taps before SETTLE are ignored)
             sim.tap("double-tap")
     events.put(("lost", "you quit"))
 
@@ -473,8 +504,11 @@ def main():
         else:
             band = Band.connect(a.number, transport="serial" if a.usb else "ble", auto_reconnect=True)
         model = secret("DEEPGRAM_MODEL") or "nova-3"
-        make_ears = lambda: speech.create(model=model)                           # noqa: E731
-        log("setup", "speech: Deepgram %s" % model)
+        options = {"model": model}
+        if model.startswith(("nova-3", "flux")):       # these models take words to listen for
+            options["keyterm"] = KEYTERMS + [t.strip() for t in (secret("DEEPGRAM_KEYTERMS") or "").split(",") if t.strip()]
+        make_ears = lambda: speech.create(**options)                             # noqa: E731
+        log("setup", "speech: Deepgram %s, listening for %d key words" % (model, len(options.get("keyterm", []))))
         print("Note: while the light is solid blue, the mic's sound goes to Deepgram. Tell people nearby.")
 
     workdir = str(Path(a.workdir).expanduser().resolve())
@@ -484,7 +518,9 @@ def main():
     elif a.agent == "computer":
         import computer
         agent = computer.ComputerAgent(secret("OPENAI_API_KEY"), model=secret("OPENAI_COMPUTER_MODEL"),
-                                       tool=secret("OPENAI_COMPUTER_TOOL"), on_step=lambda t: log("act", t))
+                                       tool=secret("OPENAI_COMPUTER_TOOL"), on_step=lambda t: log("act", t),
+                                       context="The user's current project folder is %s (when they say 'my "
+                                               "project', they mean this one)." % workdir)
         print("Note: computer use sends screenshots of your screen to OpenAI. Tap the band to stop it.", flush=True)
     elif a.agent == "codex":
         agent = CodexAgent(workdir, a.permission_mode, a.codex_model or None)

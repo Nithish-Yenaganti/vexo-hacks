@@ -137,11 +137,11 @@ def computer_checks(cfg):
          "ok": bool(importlib.util.find_spec("pyautogui")), "optional": not need,
          "hint": "Run ./start.sh again: it installs it."},
         {"id": "screen", "label": "Screen Recording permission", "ok": screen, "optional": not need,
-         "hint": "System Settings > Privacy & Security > Screen Recording: turn on your terminal app, "
-                 "then quit it and run ./start.sh again."},
+         "hint": "System Settings > Privacy & Security > Screen Recording: turn on Wrist Agent, "
+                 "then run: wrist stop && wrist"},
         {"id": "access", "label": "Accessibility permission (click and type)", "ok": access, "optional": not need,
-         "hint": "System Settings > Privacy & Security > Accessibility: turn on your terminal app, "
-                 "then quit it and run ./start.sh again."},
+         "hint": "System Settings > Privacy & Security > Accessibility: turn on Wrist Agent, "
+                 "then run: wrist stop && wrist"},
     ]
 
 
@@ -316,7 +316,8 @@ def test_selftest(cfg):
             reply = wait_for(lambda e: e.get("type") == "log" and e.get("who") == "agent"
                              and "hello from the self test" in e.get("text", ""), 10)
             steps.append(("agent reply comes back", bool(reply)))
-            steps.append(("back to ready", bool(wait_for(lambda e: e.get("state") == "ready", 10, start_at))))
+            after = seen.index(reply) + 1 if reply else start_at   # the ready that follows the reply
+            steps.append(("back to ready", bool(wait_for(lambda e: e.get("state") == "ready", 10, after))))
             say("should I deploy now")
             steps.append(("agent asks a yes/no question", bool(wait_for(
                 lambda e: e.get("type") == "question" and e.get("pending"), 10))))
@@ -430,8 +431,8 @@ def test_computer(cfg):
         size = len(agent.screenshot())
     except Exception as e:
         if not screen:
-            return report("Computer control", False, "Cannot see the screen: give your terminal app Screen Recording "
-                          "(System Settings > Privacy & Security), quit it, and run ./start.sh again.")
+            return report("Computer control", False, "Cannot see the screen: turn on Wrist Agent in System Settings > Privacy & Security > "
+                          "Screen Recording (menu: Allow computer control…), then run: wrist stop && wrist")
         return report("Computer control", False, "Screenshot failed: %s" % e)
     problems = [p for p, ok in (("Screen Recording", screen), ("Accessibility", access)) if not ok]
     report("Computer control", not problems,

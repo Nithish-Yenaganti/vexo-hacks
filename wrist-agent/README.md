@@ -64,8 +64,7 @@ Not linked yet? `ln -sf "$PWD/bin/wrist" ~/.local/bin/wrist` in this folder.
 | On the band | What happens |
 |---|---|
 | tap | start listening (light solid blue: mic on) |
-| double-tap | send what you said to the agent |
-| tap while listening | cancel |
+| tap again (or double-tap) | send what you said to the agent; say nothing to cancel |
 | tap while it talks | stop talking, listen again |
 | double-tap after a question | "yes" |
 
