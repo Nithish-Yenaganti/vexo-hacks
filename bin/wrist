@@ -68,7 +68,7 @@ case "${1:-start}" in
     else echo "It was not running."; fi ;;
   status)
     running && echo "Running (menu-bar dot). Panel: http://127.0.0.1:$PORT/" || echo "Not running. Start it with: wrist"
-    [ -x "$ROOT/.venv/bin/python" ] && config "c = server.load_config(); print('band %s · agent %s · %s · folder %s' % (c['band'] or 'not set', c['agent'], c['mode'], c['workdir']))" ;;
+    [ -x "$ROOT/.venv/bin/python" ] && config "c = server.load_config(); print(('input AirPods · folder %s' % c['workdir']) if server.airpods(c) else 'input Vexo Band %s · agent %s · %s · folder %s' % (c['band'] or '(number not set)', c['agent'], c['mode'], c['workdir']))" ;;
   panel) running || { echo "Not running. Start it with: wrist"; exit 1; }; open "http://127.0.0.1:$PORT/" ;;
   log) touch "$LOG"; tail -n 40 -f "$LOG" ;;
   login)

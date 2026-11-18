@@ -97,15 +97,20 @@
   <div class="col">
     <section>
       <h2>1 · Connect</h2>
+      <label for="input">Talk through</label>
+      <select id="input">
+        <option value="band">Vexo Band: tap, speak, double-tap (works with any agent below)</option>
+        <option value="airpods">AirPods: live voice chat, no band (it controls your Mac)</option>
+      </select>
+      <div id="bandonly">
       <label for="band">Band number (on the band's bag)</label>
       <input id="band" inputmode="numeric" placeholder="e.g. the number on your bag" autocomplete="off">
-      <label for="mode">Band</label>
+      <label for="mode">Band connection</label>
       <select id="mode">
         <option value="pretend">Pretend band: type what you'd say (no hardware, no keys)</option>
         <option value="pretend-deepgram">Pretend band + real Deepgram on a sample recording</option>
         <option value="bluetooth">Real band over Bluetooth</option>
         <option value="usb">Real band on the USB cable</option>
-        <option value="airpods">AirPods voice chat (no band): talk, it controls your Mac</option>
       </select>
       <label for="agent">Coding agent</label>
       <select id="agent">
@@ -114,6 +119,7 @@
         <option value="computer">Computer use: control this Mac (OpenAI)</option>
         <option value="echo">Echo (fake agent, for testing)</option>
       </select>
+      </div>
       <label for="workdir">Folder the agent works in</label>
       <input id="workdir" autocomplete="off">
       <div class="row">
@@ -207,12 +213,12 @@ async function api(path, body) {
 function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3200); }
 
 function formConfig() {
-  return { band: $("band").value.trim(), mode: $("mode").value, agent: $("agent").value, workdir: $("workdir").value.trim(),
+  return { input: $("input").value, band: $("band").value.trim(), mode: $("mode").value, agent: $("agent").value, workdir: $("workdir").value.trim(),
            permission_mode: $("perm").value, allowed_tools: $("tools").value.trim(), voice: $("voice").checked,
            voice_engine: $("vengine").value };
 }
 function fillForm(c) {
-  $("band").value = c.band ?? ""; $("mode").value = c.mode; $("agent").value = c.agent; $("workdir").value = c.workdir;
+  $("input").value = c.input || "band"; $("band").value = c.band ?? ""; $("mode").value = c.mode; $("agent").value = c.agent; $("workdir").value = c.workdir;
   $("perm").value = c.permission_mode; $("tools").value = c.allowed_tools; $("voice").checked = c.voice;
   $("vengine").value = c.voice_engine || "auto";
 }
@@ -220,7 +226,7 @@ async function save() {
   try { cfg = (await api("/api/config", formConfig())).result; dirty = false; refresh(); return true; }
   catch (e) { toast(e.message); return false; }
 }
-["band","mode","agent","workdir","perm","tools","voice","vengine"].forEach(id => $(id).addEventListener("change", () => { dirty = true; save(); }));
+["input","band","mode","agent","workdir","perm","tools","voice","vengine"].forEach(id => $(id).addEventListener("change", () => { dirty = true; save(); }));
 
 function renderChecks(list) {
   const ul = $("checks"); ul.replaceChildren();
@@ -234,13 +240,16 @@ function renderChecks(list) {
   }
 }
 function renderMode() {
-  const m = $("mode").value;
+  const pods = $("input").value === "airpods";
+  $("bandonly").hidden = pods;
+  const m = pods ? "airpods" : $("mode").value;
   const typed = m === "pretend", pretend = m.startsWith("pretend");
   $("say").disabled = $("sendbtn").disabled = !(running && typed);
   $("tapbtn").disabled = $("dblbtn").disabled = !(running && pretend);
   $("help").textContent = !running ? "" :
     typed ? "Type a sentence and press Enter: it goes tap → your words → double-tap, like on the band." :
     pretend ? "Tap, wait while the sample recording plays, then Double-tap to send what Deepgram heard." :
+    pods ? "Just talk through your AirPods: it answers out loud and can use your Mac. Say “stop” to stop it." :
     "Tap the band to talk (light goes blue), tap again to send. Tap to stop it talking.";
 }
 
@@ -256,7 +265,7 @@ async function refresh() {
     const b = $("startstop"); b.textContent = running ? "Stop" : "Start"; b.className = "big " + (running ? "danger" : "primary");
     document.querySelectorAll("[data-test]").forEach(x => x.disabled = !!s.test_running);
     renderMode();
-    const m = $("mutebtn"); m.hidden = !(running && s.config.mode === "airpods");
+    const m = $("mutebtn"); m.hidden = !(running && s.config.input === "airpods");
     m.textContent = s.muted ? "Unmute" : "Mute"; m.className = s.muted ? "danger" : "";
   } catch (e) { $("state").textContent = "panel offline"; }
 }

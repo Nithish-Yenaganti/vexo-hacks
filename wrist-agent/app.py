@@ -41,14 +41,14 @@ COLOURS = {  # state -> (r, g, b)
     "listening": (0.20, 0.45, 1.00), "working": (1.00, 0.67, 0.00), "speaking": (0.15, 0.80, 0.35),
     "error": (1.00, 0.25, 0.20), "chat": (0.92, 0.92, 0.92), "muted": (0.85, 0.30, 0.30),
 }
-LABELS = {"stopped": "Stopped", "starting": "Connecting to the band…", "ready": "Ready · tap the band to talk",
+LABELS = {"stopped": "Stopped", "starting": "Connecting…", "ready": "Ready · tap the band to talk",
           "listening": "Listening… tap when you're done", "working": "Working…", "speaking": "Speaking",
           "error": "Problem", "chat": "Listening · just talk", "muted": "Muted · ⌃⌥M to unmute"}
 AGENTS = [("claude", "Claude Code"), ("codex", "OpenAI Codex"), ("computer", "Computer use (this Mac)"),
           ("echo", "Echo (test)")]
+INPUTS = [("band", "Vexo Band"), ("airpods", "AirPods (voice chat, no band)")]
 MODES = [("pretend", "Pretend band (type in panel)"), ("pretend-deepgram", "Pretend band + Deepgram"),
-         ("bluetooth", "Real band · Bluetooth"), ("usb", "Real band · USB cable"),
-         ("airpods", "AirPods voice chat (no band)")]
+         ("bluetooth", "Real band · Bluetooth"), ("usb", "Real band · USB cable")]
 PILL_W, PILL_H = 520, 62
 
 
@@ -139,23 +139,28 @@ class Controller(NSObject):
         running = self.running()
         state = server.hub.state if running else "stopped"
         agent = dict(AGENTS).get(cfg["agent"], cfg["agent"])
-        band = "band %s" % cfg["band"] if cfg["band"] else "no band number"
+        band = ("AirPods" if server.airpods(cfg) else
+                "band %s" % cfg["band"] if cfg["band"] else "no band number")
         self.add(menu, "%s  ·  %s  ·  %s" % (LABELS.get(state, state).split(" ·")[0], agent, band))
         if self.detail:
             self.add(menu, "“%s”" % self.detail[:70])
         menu.addItem_(NSMenuItem.separatorItem())
         self.add(menu, "Stop" if running else "Start", "toggleRun:")
-        if running and cfg["mode"] == "airpods":
+        if running and server.airpods(cfg):
             self.add(menu, "Unmute microphone   ⌃⌥M" if server.hub.muted else "Mute microphone   ⌃⌥M",
                      "toggleMute:", on=server.hub.muted)
         menu.addItem_(NSMenuItem.separatorItem())
-        sub = self.submenu("Agent")
-        for key, name in AGENTS:
-            self.add(sub, name, "pickAgent:", key, on=cfg["agent"] == key)
-        sub = self.submenu("Band")
-        for key, name in MODES:
-            self.add(sub, name, "pickMode:", key, on=cfg["mode"] == key)
-        self.add(menu, "Band number: %s…" % (cfg["band"] or "not set"), "setBand:")
+        sub = self.submenu("Input")
+        for key, name in INPUTS:
+            self.add(sub, name, "pickInput:", key, on=cfg["input"] == key)
+        if not server.airpods(cfg):              # the band's own settings; AirPods needs none
+            sub = self.submenu("Agent")
+            for key, name in AGENTS:
+                self.add(sub, name, "pickAgent:", key, on=cfg["agent"] == key)
+            sub = self.submenu("Band")
+            for key, name in MODES:
+                self.add(sub, name, "pickMode:", key, on=cfg["mode"] == key)
+            self.add(menu, "Band number: %s…" % (cfg["band"] or "not set"), "setBand:")
         self.add(menu, "Folder: %s…" % self.short(cfg["workdir"]), "pickFolder:")
         self.add(menu, "Speak replies", "toggleVoice:", on=cfg["voice"])
         self.add(menu, "Show floating pill", "togglePill:", on=self.pill_on)
@@ -174,7 +179,7 @@ class Controller(NSObject):
         if running:                              # settings apply on the next Start
             for i in range(menu.numberOfItems()):
                 t = menu.itemAtIndex_(i).title()
-                if t in ("Agent", "Band") or t.startswith(("Band number", "Folder")):
+                if t in ("Input", "Agent", "Band") or t.startswith(("Band number", "Folder")):
                     menu.itemAtIndex_(i).setEnabled_(False)
 
     @staticmethod
@@ -215,6 +220,9 @@ class Controller(NSObject):
 
     def pickAgent_(self, sender):
         self.save(agent=sender.representedObject())
+
+    def pickInput_(self, sender):
+        self.save(input=sender.representedObject())
 
     def pickMode_(self, sender):
         self.save(mode=sender.representedObject())
@@ -417,7 +425,7 @@ class Controller(NSObject):
             text = "Nothing you say is sent. Press ⌃⌥M or use the menu to unmute."
         if shown == "error" and self.detail:
             text = self.detail
-        mic = running and server.load_config()["mode"] == "airpods"
+        mic = running and server.airpods(server.load_config())
         if mic and server.hub.muted != self.mic_shown:
             self.mic_shown = server.hub.muted
             name, tip = ("mic.slash.fill", "Unmute (⌃⌥M)") if server.hub.muted else ("mic.fill", "Mute (⌃⌥M)")

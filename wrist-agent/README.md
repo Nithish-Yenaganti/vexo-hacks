@@ -70,9 +70,19 @@ Not linked yet? `ln -sf "$PWD/bin/wrist" ~/.local/bin/wrist` in this folder.
 
 Light: dim = ready, yellow = working, green = done, red = problem.
 
+## Pick your input: Vexo Band or AirPods
+
+Both are optional: use whichever you have. Menu: **Input → Vexo Band** or **Input → AirPods**
+(in the control panel: **Talk through**). The choice is saved and applies on the next Start.
+
+| Input | You need | How you talk |
+|---|---|---|
+| **Vexo Band** | The band (or the pretend band), `DEEPGRAM_API_KEY` | Tap, speak, tap again. Works with Claude Code, Codex or computer use. |
+| **AirPods** | Any headphones with a mic, `OPENAI_API_KEY` | Just talk. Live voice chat that can use your Mac. No band number needed. |
+
 ## AirPods voice chat (no band)
 
-Menu: **Band → AirPods voice chat (no band)**, then **Start**. Just talk: OpenAI's Realtime
+Menu: **Input → AirPods**, then **Start**. Just talk: OpenAI's Realtime
 model (`gpt-realtime-2.1`) answers out loud in about a second, and you can interrupt it.
 Ask for anything on screen ("open ChatGPT and start a new chat") and it runs computer use
 while you keep talking; it tells you the result. Say "stop" to stop the computer.

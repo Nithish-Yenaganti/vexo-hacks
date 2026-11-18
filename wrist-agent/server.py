@@ -31,10 +31,11 @@ TOKEN = secrets.token_urlsafe(24)
 PORT = int(os.environ.get("WRIST_AGENT_PORT", "8765"))
 
 os.chdir(ROOT)                                   # .env is read from here
-DEFAULTS = {"band": None, "mode": "pretend", "agent": "claude", "workdir": str(ROOT),
+DEFAULTS = {"input": "band", "band": None, "mode": "pretend", "agent": "claude", "workdir": str(ROOT),
             "permission_mode": "acceptEdits", "allowed_tools": "", "voice": True, "voice_engine": "auto"}
 VOICES = ("auto", "openai", "elevenlabs", "say")
-MODES = {"pretend", "pretend-deepgram", "bluetooth", "usb", "airpods"}
+INPUTS = ("band", "airpods")                     # how you talk to it: the Vexo band, or AirPods
+MODES = {"pretend", "pretend-deepgram", "bluetooth", "usb"}   # how the band connects (input "band")
 VOICE_CHAT = HERE / "voice_chat.py"
 
 
@@ -79,7 +80,18 @@ def load_config():
         cfg.update(json.loads(CONFIG.read_text()))
     except (OSError, ValueError):
         pass
+    return migrate(cfg)
+
+
+def migrate(cfg):
+    """Older settings kept AirPods as a band mode; now it is its own input."""
+    if cfg.get("mode") == "airpods":
+        cfg["input"], cfg["mode"] = "airpods", DEFAULTS["mode"]
     return cfg
+
+
+def airpods(cfg):
+    return cfg.get("input") == "airpods"
 
 
 def save_config(new):
@@ -87,6 +99,9 @@ def save_config(new):
     for k in DEFAULTS:
         if k in new:
             cfg[k] = new[k]
+    migrate(cfg)
+    if cfg["input"] not in INPUTS:
+        raise ValueError("Unknown input: pick the Vexo band or AirPods.")
     band = cfg.get("band")
     if band in ("", None):
         cfg["band"] = None
@@ -156,7 +171,7 @@ def checks():
         {"id": "kit", "label": "Vexo kit", "ok": (KIT / "python" / "vexo_open").is_dir(),
          "hint": "Clone it: git clone https://github.com/VexoAI-Org/vexo-open-kit.git"},
         {"id": "band", "label": "Band number set", "ok": bool(cfg["band"]),
-         "hint": "Type the number written on your band's bag."},
+         "hint": "Type the number written on your band's bag.", "optional": airpods(cfg)},
         {"id": "bleak", "label": "Bluetooth library (bleak)", "ok": bool(importlib.util.find_spec("bleak")),
          "hint": "Needed for a real band. Press Install band libraries.", "optional": True},
         {"id": "serial", "label": "USB library (pyserial)", "ok": bool(importlib.util.find_spec("serial")),
@@ -173,8 +188,9 @@ def checks():
          "hint": "Add .env to .gitignore before putting keys in it."},
         {"id": "deepgram", "label": "Deepgram key", "ok": key_found("DEEPGRAM_API_KEY"),
          "hint": "DEEPGRAM_API_KEY in .env. Needed for speech from a real band."},
-        {"id": "openai", "label": "OpenAI key (voice)", "ok": key_found("OPENAI_API_KEY"),
-         "hint": "OPENAI_API_KEY in .env, for the OpenAI voice.", "optional": cfg["voice_engine"] != "openai"},
+        {"id": "openai", "label": "OpenAI key (voice, AirPods)", "ok": key_found("OPENAI_API_KEY"),
+         "hint": "OPENAI_API_KEY in .env: needed for AirPods voice chat and the OpenAI voice.",
+         "optional": cfg["voice_engine"] != "openai" and not airpods(cfg)},
         {"id": "eleven", "label": "ElevenLabs key (voice)", "ok": key_found("ELEVENLABS_API_KEY"),
          "hint": "ELEVENLABS_API_KEY in .env. Optional.", "optional": cfg["voice_engine"] != "elevenlabs"},
     ]
@@ -183,9 +199,9 @@ def checks():
 # ---- running the agent -----------------------------------------------------------------
 
 def agent_args(cfg, mode=None, agent=None, quiet=None):
-    mode = mode or cfg["mode"]
-    if mode == "airpods":                       # live voice chat through AirPods, no band
+    if mode is None and airpods(cfg):           # live voice chat through AirPods, no band
         return [sys.executable, "-u", str(VOICE_CHAT), "--json-events", "--workdir", cfg["workdir"]]
+    mode = mode or cfg["mode"]
     args = [sys.executable, "-u", str(AGENT), str(cfg["band"]), "--json-events",
             "--agent", agent or cfg["agent"], "--workdir", cfg["workdir"],
             "--permission-mode", cfg["permission_mode"]]
@@ -225,13 +241,14 @@ def start():
     if hub.proc and hub.proc.poll() is None:
         return "Already running."
     cfg = load_config()
-    if not cfg["band"] and cfg["mode"] != "airpods":
-        raise ValueError("Set your band number first.")
-    if cfg["mode"] == "airpods" and not key_found("OPENAI_API_KEY"):
+    if not cfg["band"] and not airpods(cfg):
+        raise ValueError("Set your band number first, or pick AirPods as the input.")
+    if airpods(cfg) and not key_found("OPENAI_API_KEY"):
         raise ValueError("AirPods voice chat needs OPENAI_API_KEY in .env.")
     if not Path(cfg["workdir"]).is_dir():
         raise ValueError("The agent folder does not exist.")
-    hub.add({"type": "line", "text": "Starting: mode=%s agent=%s" % (cfg["mode"], cfg["agent"])})
+    hub.add({"type": "line", "text": "Starting: AirPods voice chat" if airpods(cfg) else
+             "Starting: Vexo band (%s) agent=%s" % (cfg["mode"], cfg["agent"])})
     hub.state = "starting"
     proc = spawn(agent_args(cfg))
     hub.proc = proc
@@ -270,7 +287,7 @@ def stop():
 def set_mute(on=None):
     """Mute or unmute AirPods voice chat. on=None toggles."""
     proc = hub.proc
-    if not proc or proc.poll() is not None or load_config()["mode"] != "airpods":
+    if not proc or proc.poll() is not None or not airpods(load_config()):
         raise ValueError("Mute works while AirPods voice chat is running.")
     want = (not hub.muted) if on is None else bool(on)
     proc.stdin.write("/mute\n" if want else "/unmute\n")
@@ -282,7 +299,8 @@ def send_input(text):
     proc = hub.proc
     if not proc or proc.poll() is not None:
         raise ValueError("Start the agent first.")
-    if load_config()["mode"] not in ("pretend", "pretend-deepgram"):
+    cfg = load_config()
+    if airpods(cfg) or cfg["mode"] not in ("pretend", "pretend-deepgram"):
         raise ValueError("Typing only works with the pretend band. With a real band: tap it.")
     text = " ".join(str(text).split())[:2000]
     if not text:
